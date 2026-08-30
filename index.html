@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Potato Royale - Online Arena Survival</title>
+<meta name="description" content="A browser co-op arena survival roguelite. Peer-to-peer over WebRTC, no server required.">
+<meta name="theme-color" content="#07080d">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥔</text></svg>">
+<link rel="stylesheet" href="./style.css">
+<!-- PeerJS provides only the WebRTC signalling handshake. Once peers are
+     connected all game traffic is direct peer-to-peer. -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- ==================== In-game HUD ==================== -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="hud-box" id="waveBox"><span class="lbl">WAVE</span><b id="waveNum">1</b></div>
+      <div class="hud-timer"><div id="timerFill"></div><span id="timerTxt">20</span></div>
+      <div class="hud-box" id="matBox"><span class="lbl">MATERIALS</span><b id="matNum">0</b></div>
+    </div>
+
+    <div class="hud-self">
+      <div class="hp-row">
+        <div class="hp-bar"><div id="hpFill"></div><span id="hpTxt">10 / 10</span></div>
+        <div class="lvl-chip">LV <b id="lvlNum">1</b></div>
+      </div>
+      <div class="xp-bar"><div id="xpFill"></div></div>
+      <div id="weaponRow" class="weapon-row"></div>
+    </div>
+
+    <div id="teamPanel" class="team-panel"></div>
+    <div id="netBadge" class="net-badge hidden"></div>
+  </div>
+
+  <!-- ==================== Main menu ==================== -->
+  <section id="menu" class="screen">
+    <div class="menu-card">
+      <h1>POTATO <span>ROYALE</span></h1>
+      <p class="tag">Co-op arena survival. Peer-to-peer, no server, no install.</p>
+
+      <div id="menuMain" class="menu-pane">
+        <label class="field">
+          <span>Your name</span>
+          <input id="nameInput" maxlength="14" placeholder="Spud" autocomplete="off">
+        </label>
+        <div class="btn-col">
+          <button id="btnSolo" class="btn primary">Play solo</button>
+          <button id="btnHost" class="btn">Host an online game</button>
+          <button id="btnJoinPane" class="btn">Join with a code</button>
+        </div>
+        <p class="hint">Up to 8 players. The host runs the game world, so pick whoever has the best connection.</p>
+      </div>
+
+      <div id="menuJoin" class="menu-pane hidden">
+        <label class="field">
+          <span>Room code</span>
+          <input id="codeInput" maxlength="5" placeholder="ABCDE" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="btn-col">
+          <button id="btnJoin" class="btn primary">Connect</button>
+          <button id="btnBack" class="btn ghost">Back</button>
+        </div>
+        <p id="joinErr" class="err"></p>
+      </div>
+
+      <div id="menuConnecting" class="menu-pane hidden">
+        <div class="spinner"></div>
+        <p id="connTxt">Connecting…</p>
+        <button id="btnCancel" class="btn ghost">Cancel</button>
+      </div>
+    </div>
+    <footer class="credit">WASD / arrows to move &middot; mouse aims &middot; weapons fire themselves</footer>
+  </section>
+
+  <!-- ==================== Lobby ==================== -->
+  <section id="lobby" class="screen hidden">
+    <div class="lobby-card">
+      <div class="lobby-head">
+        <div>
+          <h2>Lobby</h2>
+          <p class="sub" id="lobbySub">Pick a character, then ready up.</p>
+        </div>
+        <div id="roomBox" class="room-box hidden">
+          <span class="lbl">ROOM CODE</span>
+          <b id="roomCode">-----</b>
+          <button id="btnCopy" class="btn tiny">Copy invite link</button>
+        </div>
+      </div>
+
+      <div class="lobby-body">
+        <div class="char-grid" id="charGrid"></div>
+        <aside class="lobby-side">
+          <h3>Players</h3>
+          <ul id="playerList" class="player-list"></ul>
+          <button id="btnReady" class="btn primary wide">Ready</button>
+          <button id="btnLeave" class="btn ghost wide">Leave</button>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== Shop ==================== -->
+  <section id="shop" class="screen hidden">
+    <div class="shop-card">
+      <header class="shop-head">
+        <div>
+          <h2>Shop</h2>
+          <p class="sub">Wave <b id="shopNext">2</b> starts when everyone is ready.</p>
+        </div>
+        <div class="shop-meta">
+          <div class="hud-box"><span class="lbl">MATERIALS</span><b id="shopMats">0</b></div>
+          <div class="hud-box"><span class="lbl">AUTO-START</span><b id="shopTimer">--</b></div>
+        </div>
+      </header>
+
+      <div class="offers" id="offers"></div>
+
+      <div class="shop-actions">
+        <button id="btnReroll" class="btn">Reroll <b id="rerollCost">2</b></button>
+        <button id="btnGo" class="btn primary">Ready for next wave</button>
+      </div>
+
+      <div class="shop-lower">
+        <div class="panel">
+          <h3>Weapons <small id="wslots"></small></h3>
+          <div id="invWeapons" class="inv-grid"></div>
+        </div>
+        <div class="panel">
+          <h3>Items</h3>
+          <div id="invItems" class="inv-grid"></div>
+        </div>
+        <div class="panel stats-panel">
+          <h3>Stats</h3>
+          <div id="statList" class="stat-list"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== Level-up (non-blocking) ==================== -->
+  <div id="levelup" class="levelup hidden">
+    <div class="levelup-head">Level <b id="luLevel">2</b> &mdash; choose an upgrade <span id="luPending"></span></div>
+    <div id="luOptions" class="lu-options"></div>
+  </div>
+
+  <!-- ==================== Game over ==================== -->
+  <section id="over" class="screen hidden">
+    <div class="over-card">
+      <h2 id="overTitle">Run over</h2>
+      <p class="sub" id="overSub"></p>
+      <ul id="scoreList" class="score-list"></ul>
+      <div class="btn-col">
+        <button id="btnAgain" class="btn primary">Back to lobby</button>
+        <button id="btnQuit" class="btn ghost">Main menu</button>
+      </div>
+      <p class="hint" id="overHint"></p>
+    </div>
+  </section>
+
+  <div id="toasts" class="toasts"></div>
+  <button id="btnMute" class="mute" title="Mute">&#128266;</button>
+
+  <!-- Mobile virtual stick -->
+  <div id="stick" class="stick hidden"><div id="stickNub"></div></div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
