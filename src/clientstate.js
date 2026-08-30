@@ -161,7 +161,7 @@ export class ClientState {
     const span = newer.time - older.time;
     const t = span > 0.001 ? clamp((target - older.time) / span, 0, 1) : 0;
 
-    const players = blend(older.players, newer.players, t, true);
+    let players = blend(older.players, newer.players, t, true);
 
     // Draw OUR player from the prediction, everyone else from the snapshot.
     //
@@ -172,11 +172,17 @@ export class ClientState {
     // which is exactly the "host is fine, everyone else lags" report.
     if (this.predValid) {
       const i = players.findIndex((p) => p.id === this.pid);
-      if (i >= 0) {
+      // Never predict a corpse forward: a dead player has no inputs, and
+      // sliding their body around after the host stopped it looks broken.
+      if (i >= 0 && !(players[i].flags & 1)) {
         const me = this.predictedPos(now);
-        // Never predict a corpse forward: a dead player has no inputs, and
-        // sliding their body around after the host has stopped it looks broken.
-        if (!(players[i].flags & 1)) players[i] = { ...players[i], x: me.x, y: me.y };
+        // blend() hands back the stored array verbatim when there is nothing to
+        // interpolate, so writing into it would corrupt the buffered snapshot -
+        // and reconcile() reads that same array as the authority, which would
+        // feed the prediction back into itself. Copy first.
+        const copy = players.slice();
+        copy[i] = { ...copy[i], x: me.x, y: me.y };
+        players = copy;
       }
     }
 
@@ -192,6 +198,15 @@ export class ClientState {
   }
 
   get stale() { return this.lastSnapAt > 0 && performance.now() - this.lastSnapAt > 3000; }
+
+  /**
+   * True when the game is running but not one snapshot has ever arrived.
+   *
+   * `stale` cannot cover this: it needs a first snapshot to measure from, so a
+   * client whose state channel never opened scored `stale === false` and got a
+   * silent empty arena under a HUD still showing its untouched HTML defaults.
+   */
+  get neverReceived() { return this.lastSnapAt === 0; }
 }
 
 /** Match entities by id across two snapshots and interpolate the pairs. */

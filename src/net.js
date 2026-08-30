@@ -62,6 +62,33 @@ export function makeRoomCode() {
 const STATE_OPTS = { label: 's', reliable: false, serialization: 'binary' };
 const CTRL_OPTS = { label: 'c', reliable: true, serialization: 'json' };
 
+// PeerJS gives each DataConnection its own RTCPeerConnection, so the two
+// channels negotiate ICE independently and can succeed independently. The
+// control channel opening while the state channel never does is a real and
+// survivable outcome - the player reaches the lobby, starts the wave, and then
+// stares at an empty arena because no snapshot ever arrives. When that
+// happens the host falls back to pushing snapshots down the control channel:
+// reliable and ordered rather than unreliable, so it jitters more, but it is
+// a game instead of a blank screen.
+const STATE_RETRY_MS = 4000;
+const STATE_RETRIES = 3;
+
+/** Snapshots are binary; the control channel is JSON. Base64 bridges them. */
+export function bytesToB64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 8192) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  }
+  return btoa(s);
+}
+
+export function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 // ===========================================================================
 // Host
 // ===========================================================================
@@ -172,10 +199,27 @@ export class Host {
   }
 
   broadcastState(bytes) {
+    this._sn = (this._sn || 0) + 1;
+    let b64 = null;
     for (const rec of this.peers.values()) {
-      if (rec.joined && rec.state?.open) {
+      if (!rec.joined) continue;
+      if (rec.state?.open) {
+        rec.degraded = false;
         try { rec.state.send(bytes); } catch { /* unreliable, fine */ }
+        continue;
       }
+      // No state channel. Push snapshots down the reliable control channel
+      // instead, at half rate: it is ordered, so a backlog here shows up as
+      // growing delay rather than dropped frames, and base64 costs a third
+      // more bytes on top.
+      if (!rec.ctrl?.open) continue;
+      if (!rec.degraded) {
+        rec.degraded = true;
+        this.cb.onStatus?.(`${rec.name || 'A player'} lost their fast channel - using the slower fallback`, 'warn');
+      }
+      if (this._sn % 2) continue;
+      if (b64 === null) b64 = bytesToB64(bytes);
+      try { rec.ctrl.send({ t: 'snap', b: b64 }); } catch { /* dropped */ }
     }
   }
 
@@ -200,6 +244,8 @@ export class Client {
     this.pid = 0;
     this.ice = 'new';
     this.reachedHost = false;
+    this.stateOpen = false;
+    this.closed = false;
   }
 
   /** What actually went wrong, in words a player can act on. */
@@ -234,7 +280,7 @@ export class Client {
       this.peer.on('open', () => {
         const host = SIGNAL_PREFIX + this.code;
         this.ctrl = this.peer.connect(host, CTRL_OPTS);
-        this.state = this.peer.connect(host, STATE_OPTS);
+        this._openState();
 
         watchIce(this.ctrl, (st) => {
           this.ice = st;
@@ -271,9 +317,32 @@ export class Client {
         this.ctrl.on('close', () => { if (settled) this.cb.onClose?.(); });
         this.ctrl.on('error', () => { if (!settled) fail('Connection to host failed.'); });
 
-        this.state.on('data', (d) => this.cb.onState?.(d));
       });
     });
+  }
+
+  /**
+   * Open the state channel, and keep trying if it does not come up. Its ICE
+   * negotiation is separate from the control channel's, so it can fail on its
+   * own - and silently, since the game looks connected either way.
+   */
+  _openState(attempt = 0) {
+    if (this.closed) return;
+    try {
+      this.state = this.peer.connect(SIGNAL_PREFIX + this.code, STATE_OPTS);
+    } catch { return; }
+    this.state.on('open', () => { this.stateOpen = true; });
+    this.state.on('data', (d) => this.cb.onState?.(d));
+    this.state.on('close', () => { this.stateOpen = false; });
+    setTimeout(() => {
+      if (this.closed || this.stateOpen) return;
+      if (attempt < STATE_RETRIES) {
+        try { this.state?.close(); } catch { /* noop */ }
+        this._openState(attempt + 1);
+      } else {
+        this.cb.onStatus?.('Using the slower fallback channel - movement may stutter.', 'warn');
+      }
+    }, STATE_RETRY_MS);
   }
 
   sendControl(msg) {
@@ -285,6 +354,7 @@ export class Client {
   }
 
   close() {
+    this.closed = true;
     try { this.peer?.destroy(); } catch { /* noop */ }
   }
 }

@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { World, TICK, PHASE } from './world.js';
-import { Host, Client, makeRoomCode } from './net.js';
+import { Host, Client, makeRoomCode, b64ToBytes } from './net.js';
 import { ClientState } from './clientstate.js';
 import { Renderer } from './render.js';
 import { UI } from './ui.js';
@@ -342,6 +342,12 @@ class Game {
         }
         break;
       }
+      case 'snap': {
+        // Snapshot over the control channel: the state channel never opened.
+        const v = asView(b64ToBytes(msg.b));
+        if (v && v.getUint8(0) === MSG.SNAPSHOT) this.state.pushSnapshot(decodeSnapshot(v));
+        break;
+      }
       case 'you':
         this.state.you = msg;
         break;
@@ -575,7 +581,11 @@ class Game {
     }
 
     if (this.mode === MODE.CLIENT) {
-      this.ui.netBadge(this.state.stale ? 'Connection unstable…' : null);
+      this.ui.netBadge(
+        this.state.neverReceived ? 'No game data from the host - still trying…'
+          : this.state.stale ? 'Connection unstable…'
+            : null,
+      );
     }
     if (this.perf.on) { this.perf.hud += performance.now() - tHud; this.reportPerf(now, view); }
   }
