@@ -81,25 +81,73 @@ export const CHARACTERS = [
 //   scale  : how much melee/ranged/elem stats add as flat damage
 // --------------------------------------------------------------------------
 export const WEAPONS = {
-  knife:    { name: 'Knife',        cls: 'melee',  tier: 1, price: 12, dmg: 7,  cd: 0.45, range: 115, arc: 1.3, scale: { m: 1.0, r: 0, e: 0 }, crit: 5,  color: '#dfe9f5' },
-  sword:    { name: 'Sword',        cls: 'melee',  tier: 2, price: 26, dmg: 13, cd: 0.85, range: 145, arc: 2.1, scale: { m: 1.2, r: 0, e: 0 }, color: '#b8c6d9' },
-  spear:    { name: 'Spear',        cls: 'melee',  tier: 2, price: 24, dmg: 15, cd: 0.7,  range: 210, arc: 0.55, scale: { m: 1.1, r: 0, e: 0 }, color: '#cbb88f' },
-  hammer:   { name: 'Hammer',       cls: 'melee',  tier: 2, price: 28, dmg: 24, cd: 1.35, range: 135, arc: 2.6, knock: 420, scale: { m: 1.5, r: 0, e: 0 }, color: '#a08b6b' },
-  scythe:   { name: 'Scythe',       cls: 'melee',  tier: 3, price: 46, dmg: 17, cd: 0.75, range: 175, arc: 3.4, scale: { m: 1.3, r: 0, e: 0.3 }, lifesteal: 8, color: '#a6f0c6' },
-  pistol:   { name: 'Pistol',       cls: 'ranged', tier: 1, price: 12, dmg: 8,  cd: 0.5,  range: 500, spd: 760, scale: { m: 0, r: 1.0, e: 0 }, color: '#ffe9a8' },
-  smg:      { name: 'SMG',          cls: 'ranged', tier: 1, price: 16, dmg: 4,  cd: 0.15, range: 420, spd: 800, spread: 0.13, scale: { m: 0, r: 0.5, e: 0 }, color: '#ffd166' },
-  shotgun:  { name: 'Shotgun',      cls: 'ranged', tier: 2, price: 30, dmg: 5,  cd: 0.9,  range: 340, spd: 680, count: 6, spread: 0.42, scale: { m: 0, r: 0.6, e: 0 }, color: '#ffb37a' },
-  shuriken: { name: 'Shuriken',     cls: 'ranged', tier: 2, price: 26, dmg: 8,  cd: 0.5,  range: 460, spd: 620, pierce: 2, scale: { m: 0.4, r: 0.6, e: 0 }, color: '#c8e6ff' },
-  wand:     { name: 'Magic Wand',   cls: 'ranged', tier: 2, price: 32, dmg: 11, cd: 0.7,  range: 540, spd: 430, homing: 4.5, scale: { m: 0, r: 0.3, e: 0.9 }, color: '#c39bff' },
-  flamer:   { name: 'Flamethrower', cls: 'ranged', tier: 2, price: 34, dmg: 3,  cd: 0.085, range: 230, spd: 330, life: 0.7, pierce: 99, scale: { m: 0, r: 0.1, e: 0.5 }, color: '#ff7a45' },
-  laser:    { name: 'Laser Rifle',  cls: 'ranged', tier: 3, price: 48, dmg: 9,  cd: 0.38, range: 620, spd: 1250, pierce: 5, scale: { m: 0, r: 0.5, e: 0.8 }, color: '#66f0ff' },
-  sniper:   { name: 'Sniper',       cls: 'ranged', tier: 3, price: 52, dmg: 32, cd: 1.55, range: 950, spd: 1600, pierce: 3, crit: 15, scale: { m: 0, r: 1.7, e: 0 }, color: '#a8ffd0' },
-  rocket:   { name: 'Rocket Tube',  cls: 'ranged', tier: 3, price: 54, dmg: 26, cd: 1.7,  range: 620, spd: 470, aoe: 115, scale: { m: 0, r: 1.0, e: 0.6 }, color: '#ff9f6b' },
-  minigun:  { name: 'Minigun',      cls: 'ranged', tier: 4, price: 76, dmg: 6,  cd: 0.075, range: 450, spd: 880, spread: 0.2, scale: { m: 0, r: 0.4, e: 0 }, color: '#ffcf5c' },
-  tesla:    { name: 'Tesla Coil',   cls: 'ranged', tier: 4, price: 80, dmg: 16, cd: 0.95, range: 430, chain: 4, scale: { m: 0, r: 0.2, e: 1.5 }, color: '#7fd7ff' },
+  knife:    { desc: 'Quick, short jabs. Cheap and never actually bad.', name: 'Knife',        cls: 'melee',  tier: 1, price: 12, dmg: 7,  cd: 0.45, range: 115, arc: 1.3, scale: { m: 1.0, r: 0, e: 0 }, crit: 5,  color: '#dfe9f5' },
+  sword:    { desc: 'A wider, heavier swing than the knife. Solid all-round melee.', name: 'Sword',        cls: 'melee',  tier: 2, price: 26, dmg: 13, cd: 0.85, range: 145, arc: 2.1, scale: { m: 1.2, r: 0, e: 0 }, color: '#b8c6d9' },
+  spear:    { desc: 'Long narrow thrust. Reaches past contact range, hits one target.', name: 'Spear',        cls: 'melee',  tier: 2, price: 24, dmg: 15, cd: 0.7,  range: 210, arc: 0.55, scale: { m: 1.1, r: 0, e: 0 }, color: '#cbb88f' },
+  hammer:   { desc: 'Slow, huge arc, knocks everything back. Melee crowd control.', name: 'Hammer',       cls: 'melee',  tier: 2, price: 28, dmg: 24, cd: 1.35, range: 135, arc: 2.6, knock: 420, scale: { m: 1.5, r: 0, e: 0 }, color: '#a08b6b' },
+  scythe:   { desc: 'Sweeps almost a full circle and heals you on every hit.', name: 'Scythe',       cls: 'melee',  tier: 3, price: 46, dmg: 17, cd: 0.75, range: 175, arc: 3.4, scale: { m: 1.3, r: 0, e: 0.3 }, lifesteal: 8, color: '#a6f0c6' },
+  pistol:   { desc: 'One accurate shot at a time. Steady damage at long range.', name: 'Pistol',       cls: 'ranged', tier: 1, price: 12, dmg: 8,  cd: 0.5,  range: 500, spd: 760, scale: { m: 0, r: 1.0, e: 0 }, color: '#ffe9a8' },
+  smg:      { desc: 'Sprays fast and wide. Tiny per shot, enormous in volume.', name: 'SMG',          cls: 'ranged', tier: 1, price: 16, dmg: 4,  cd: 0.15, range: 420, spd: 800, spread: 0.13, scale: { m: 0, r: 0.5, e: 0 }, color: '#ffd166' },
+  shotgun:  { desc: 'Six pellets in a cone. Brutal up close, wasted at distance.', name: 'Shotgun',      cls: 'ranged', tier: 2, price: 30, dmg: 5,  cd: 0.9,  range: 340, spd: 680, count: 6, spread: 0.42, scale: { m: 0, r: 0.6, e: 0 }, color: '#ffb37a' },
+  shuriken: { desc: 'Punches through 2 enemies. Scales off melee AND ranged.', name: 'Shuriken',     cls: 'ranged', tier: 2, price: 26, dmg: 8,  cd: 0.5,  range: 460, spd: 620, pierce: 2, scale: { m: 0.4, r: 0.6, e: 0 }, color: '#c8e6ff' },
+  wand:     { desc: 'Slow homing orb that never misses. Mostly elemental scaling.', name: 'Magic Wand',   cls: 'ranged', tier: 2, price: 32, dmg: 11, cd: 0.7,  range: 540, spd: 430, homing: 4.5, scale: { m: 0, r: 0.3, e: 0.9 }, color: '#c39bff' },
+  flamer:   { desc: 'Short cone of fire that pierces everything in front of you.', name: 'Flamethrower', cls: 'ranged', tier: 2, price: 34, dmg: 3,  cd: 0.085, range: 230, spd: 330, life: 0.7, pierce: 99, scale: { m: 0, r: 0.1, e: 0.5 }, color: '#ff7a45' },
+  laser:    { desc: 'Fast beam through up to 5 enemies. Ranged + elemental.', name: 'Laser Rifle',  cls: 'ranged', tier: 3, price: 48, dmg: 9,  cd: 0.38, range: 620, spd: 1250, pierce: 5, scale: { m: 0, r: 0.5, e: 0.8 }, color: '#66f0ff' },
+  sniper:   { desc: 'Enormous damage at extreme range, high crit, very slow.', name: 'Sniper',       cls: 'ranged', tier: 3, price: 52, dmg: 32, cd: 1.55, range: 950, spd: 1600, pierce: 3, crit: 15, scale: { m: 0, r: 1.7, e: 0 }, color: '#a8ffd0' },
+  rocket:   { desc: 'Explodes on impact for area damage. Slow, arcs into crowds.', name: 'Rocket Tube',  cls: 'ranged', tier: 3, price: 54, dmg: 26, cd: 1.7,  range: 620, spd: 470, aoe: 115, scale: { m: 0, r: 1.0, e: 0.6 }, color: '#ff9f6b' },
+  minigun:  { desc: 'The highest fire rate in the game. Wants crit and range.', name: 'Minigun',      cls: 'ranged', tier: 4, price: 76, dmg: 6,  cd: 0.075, range: 450, spd: 880, spread: 0.2, scale: { m: 0, r: 0.4, e: 0 }, color: '#ffcf5c' },
+  tesla:    { desc: 'Chains lightning between 4 nearby enemies. Pure elemental.', name: 'Tesla Coil',   cls: 'ranged', tier: 4, price: 80, dmg: 16, cd: 0.95, range: 430, chain: 4, scale: { m: 0, r: 0.2, e: 1.5 }, color: '#7fd7ff' },
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS);
+
+// --------------------------------------------------------------------------
+// Weapon levels (Brotato-style combining).
+//
+// `tier` above is *rarity* - which shop pool a weapon rolls from. `lvl` is a
+// separate axis: two identical weapons at the same level merge into one at the
+// next level, freeing a slot. Every level is a straight numeric upgrade, so a
+// merge is never a downgrade and never needs a confirmation prompt.
+// --------------------------------------------------------------------------
+export const MAX_WEAPON_LVL = 4;
+export const ROMAN = ['I', 'II', 'III', 'IV'];
+
+const LVL_DMG = [1, 1.55, 2.35, 3.5];
+const LVL_CD = [1, 0.94, 0.88, 0.82];
+const LVL_RANGE = [1, 1.05, 1.1, 1.15];
+
+const _lvlCache = new Map();
+
+/** The effective definition of `id` at `lvl` (1..MAX_WEAPON_LVL). Cached. */
+export function weaponAt(id, lvl) {
+  const L = lvl < 1 ? 1 : lvl > MAX_WEAPON_LVL ? MAX_WEAPON_LVL : lvl | 0;
+  const key = `${id}${L}`;
+  let d = _lvlCache.get(key);
+  if (d) return d;
+  const b = WEAPONS[id];
+  d = {
+    ...b,
+    lvl: L,
+    dmg: Math.round(b.dmg * LVL_DMG[L - 1] * 10) / 10,
+    cd: b.cd * LVL_CD[L - 1],
+    range: Math.round(b.range * LVL_RANGE[L - 1]),
+  };
+  _lvlCache.set(key, d);
+  return d;
+}
+
+/** Display name including the level numeral, e.g. "Knife II". */
+export function weaponName(id, lvl) {
+  const n = WEAPONS[id].name;
+  return lvl > 1 ? `${n} ${ROMAN[Math.min(lvl, MAX_WEAPON_LVL) - 1]}` : n;
+}
+
+/** Sustained damage per second, ignoring crit and stats. For shop cards. */
+export function weaponDps(def) {
+  const shots = def.count || 1;
+  const hits = def.chain || (def.pierce ? Math.min(def.pierce + 1, 4) : 1);
+  return (def.dmg * shots * hits) / def.cd;
+}
 
 // --------------------------------------------------------------------------
 // Items (passive stat sticks bought in the shop)

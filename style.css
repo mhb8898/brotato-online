@@ -308,3 +308,63 @@ button { font-family: inherit; }
   margin: -26px 0 0 -26px; border-radius: 50%;
   background: rgba(255,255,255,.28);
 }
+
+/* --------------------------- weapon detail cards ------------------------- */
+.char .starter { margin: 8px 0 0; font-size: 11px; color: #6d7590; line-height: 1.5; font-style: italic; }
+
+.offer .wdesc { margin: 0; font-size: 11.5px; color: #9aa3bb; line-height: 1.5; }
+.offer .wstat { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+.offer .wstat b { color: #d6dcf0; }
+.offer .wstat .scale { color: #7f88a3; font-size: 10.5px; }
+.offer .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.offer .tag {
+  font-size: 10px; padding: 2px 6px; border-radius: 20px;
+  background: rgba(255,255,255,.06); color: #aeb6cc;
+}
+.offer .merge {
+  font-size: 11px; padding: 5px 7px; border-radius: 7px;
+  background: rgba(126,224,129,.1); border: 1px solid rgba(126,224,129,.3); color: var(--good);
+}
+.offer.locked { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(255,200,87,.25); }
+.offer .lock { opacity: .4; transition: opacity .12s, transform .12s; }
+.offer .lock:hover { opacity: .85; }
+.offer .lock.on { opacity: 1; transform: scale(1.15); filter: drop-shadow(0 0 6px rgba(255,200,87,.7)); }
+
+.inv-row .wname { display: flex; flex-direction: column; gap: 1px; }
+.inv-row.wpn small { color: #6d7590; font-size: 10.5px; }
+.inv-row .lvl { color: var(--accent); font-size: 11px; }
+.toast.good { border-color: rgba(126,224,129,.5); color: var(--good); }
+
+/* The level-up panel is deliberately non-blocking and lives at the bottom of
+   the screen. Now that a pending choice correctly survives into the shop, it
+   would sit on top of the inventory - so reserve room for it there. */
+#app:has(.levelup:not(.hidden)) #shop { padding-bottom: 168px; }
+
+/* ------------------------- connection self-test -------------------------- */
+.btn.link {
+  background: none; border: none; color: var(--dim); text-decoration: underline;
+  font-size: 12px; padding: 4px; cursor: pointer; align-self: center;
+}
+.btn.link:hover { color: var(--fg); }
+.btn.link:disabled { opacity: .5; cursor: default; text-decoration: none; }
+.net-test {
+  display: flex; flex-direction: column; gap: 3px; margin-top: 4px;
+  padding: 10px 12px; border-radius: 10px; font-size: 11.5px; line-height: 1.5;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--dim);
+}
+.net-test b { font-size: 12.5px; color: var(--fg); }
+.net-test.ok { border-color: rgba(126,224,129,.45); }
+.net-test.ok b { color: var(--good); }
+.net-test.warn { border-color: rgba(255,200,87,.45); }
+.net-test.warn b { color: var(--accent); }
+.net-test.bad { border-color: rgba(255,92,122,.45); }
+.net-test.bad b { color: var(--bad); }
+
+/* Press P. Deliberately plain and out of the way - it is a measuring tool. */
+.perf {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  z-index: 40; padding: 4px 10px; border-radius: 8px;
+  background: rgba(0,0,0,.72); border: 1px solid var(--line);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #9fe8b5; white-space: nowrap; pointer-events: none;
+}

@@ -6,7 +6,8 @@
 
 import {
   CHARACTERS, WEAPONS, ITEMS, STAT_LABEL, STAT_PCT, BASE_STATS,
-  TIER_COLOR, TIER_NAME, MAX_WEAPONS,
+  TIER_COLOR, TIER_NAME, MAX_WEAPONS, MAX_WEAPON_LVL, ROMAN,
+  weaponAt, weaponName, weaponDps,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -17,6 +18,47 @@ const el = (tag, cls, html) => {
   return n;
 };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/** Which damage stats actually feed this weapon - the thing shop cards hid. */
+function scaleText(def) {
+  const out = [];
+  if (def.scale.m) out.push(`Melee &times;${def.scale.m}`);
+  if (def.scale.r) out.push(`Ranged &times;${def.scale.r}`);
+  if (def.scale.e) out.push(`Elemental &times;${def.scale.e}`);
+  return out.join(' &middot; ') || 'flat damage only';
+}
+
+/** Short behaviour tags: everything the raw numbers do not say out loud. */
+function weaponTags(def) {
+  const t = [];
+  if (def.count) t.push(`${def.count} projectiles`);
+  if (def.pierce) t.push(def.pierce >= 99 ? 'pierces all' : `pierces ${def.pierce}`);
+  if (def.chain) t.push(`chains ${def.chain}`);
+  if (def.aoe) t.push(`${def.aoe} blast`);
+  if (def.homing) t.push('homing');
+  if (def.knock) t.push('knockback');
+  if (def.lifesteal) t.push(`${def.lifesteal}% lifesteal`);
+  if (def.crit) t.push(`+${def.crit}% crit`);
+  if (def.spread) t.push('spread');
+  return t;
+}
+
+/** The full stat block for one weapon at one level. */
+function weaponBody(id, lvl) {
+  const def = weaponAt(id, lvl);
+  const tags = weaponTags(def).map((x) => `<span class="tag">${x}</span>`).join('');
+  return (
+    `<p class="wdesc">${WEAPONS[id].desc}</p>` +
+    `<div class="wstat">` +
+    `<span>${def.cls === 'melee' ? 'Melee' : 'Ranged'}</span>` +
+    `<span><b>${def.dmg}</b> dmg &times; <b>${(1 / def.cd).toFixed(1)}</b>/s ` +
+    `= <b>${Math.round(weaponDps(def))}</b> dps</span>` +
+    `<span><b>${def.range}</b> range</span>` +
+    `<span class="scale">Scales with ${scaleText(def)}</span>` +
+    `</div>` +
+    (tags ? `<div class="tags">${tags}</div>` : '')
+  );
+}
 
 function fmtStat(k, v) {
   const sign = v > 0 ? '+' : '';
@@ -55,6 +97,8 @@ export class UI {
     $('btnQuit').onclick = () => c.onLeave();
     $('btnMute').onclick = () => c.onMute();
 
+    $('btnNetTest').onclick = () => c.onNetTest();
+
     $('nameInput').value = localStorage.getItem('pr_name') || '';
   }
 
@@ -70,6 +114,20 @@ export class UI {
   }
 
   connecting(text) { this.pane('menuConnecting'); $('connTxt').textContent = text; }
+
+  netTest(state, res) {
+    const box = $('netTest');
+    box.classList.remove('hidden');
+    $('btnNetTest').disabled = state === 'running';
+    if (state === 'running') {
+      box.className = 'net-test';
+      box.innerHTML = '<b>Testing…</b><span>Asking STUN and TURN what they can do for you.</span>';
+      return;
+    }
+    box.className = `net-test ${res.verdict}`;
+    box.innerHTML = `<b>${esc(res.headline)}</b>`
+      + res.lines.map((l) => `<span>${esc(l)}</span>`).join('');
+  }
   joinError(text) { this.pane('menuJoin'); $('joinErr').textContent = text; }
   get playerName() { return ($('nameInput').value || '').trim().slice(0, 14) || 'Spud'; }
 
@@ -86,7 +144,8 @@ export class UI {
       node.innerHTML =
         `<div class="dot" style="background:${ch.color};box-shadow:0 0 14px ${ch.color}"></div>` +
         `<h4>${ch.name}</h4><p>${ch.desc}</p>` +
-        `<div class="mods"><span class="pill">${WEAPONS[ch.weapon].name}</span>${mods}</div>`;
+        `<div class="mods"><span class="pill" title="${WEAPONS[ch.weapon].desc}">${WEAPONS[ch.weapon].name}</span>${mods}</div>` +
+        `<p class="starter">${WEAPONS[ch.weapon].desc}</p>`;
       node.onclick = () => { this.selChar = ch.id; this.markChar(); this.cb.onChar(ch.id); };
       grid.appendChild(node);
     }
@@ -146,7 +205,7 @@ export class UI {
       $('matNum').textContent = you.mats;
       $('lvlNum').textContent = you.level;
       $('xpFill').style.width = `${(you.xp / you.xpNeed) * 100}%`;
-      const key = you.weapons.map((w) => w.id).join(',');
+      const key = you.weapons.map((w) => `${w.id}${w.lvl}`).join(',');
       if (key !== this._wkey) {
         this._wkey = key;
         $('weaponRow').innerHTML = you.weapons
@@ -167,9 +226,10 @@ export class UI {
       html +=
         `<div class="team-row ${down ? 'down' : ''}">` +
         `<div class="nm"><span class="dot" style="background:${ch.color}"></span>${esc(info.name)}</div>` +
-        `<div class="bar"><i style="width:${down ? 100 : Math.max(0, (p.hp / p.maxHp) * 100)}%"></i></div></div>`;
+        `<div class="bar"><i style="width:${down ? 100 : Math.round(Math.max(0, (p.hp / p.maxHp) * 100))}%"></i></div></div>`;
     }
-    tp.innerHTML = html;
+    // Reparsing this every frame forced a full layout 60x a second for nothing.
+    if (html !== this._teamHtml) { this._teamHtml = html; tp.innerHTML = html; }
   }
 
   netBadge(text) {
@@ -185,8 +245,11 @@ export class UI {
     $('shopTimer').textContent = timeLeft > 0 ? `${Math.ceil(timeLeft)}s` : '--';
     if (!shop || !you) return;
 
-    $('rerollCost').textContent = shop.reroll;
+    const freeRoll = shop.reroll === 0;
+    $('rerollCost').textContent = freeRoll ? 'FREE' : shop.reroll;
     $('btnReroll').disabled = you.mats < shop.reroll;
+    $('btnReroll').classList.toggle('primary', freeRoll);
+    $('btnReroll').title = freeRoll ? 'You bought the whole shop - this roll is on the house' : '';
     $('wslots').textContent = `${you.weapons.length} / ${MAX_WEAPONS}`;
 
     const me = roster.get(myPid);
@@ -195,7 +258,8 @@ export class UI {
 
     // Rebuilding the offer grid every frame would kill click targets mid-press,
     // so only redraw when something actually changed.
-    const key = JSON.stringify([shop.offers.map((o) => o && [o.id, o.sold]), shop.locked, you.mats, you.weapons.length]);
+    const key = JSON.stringify([shop.offers.map((o) => o && [o.id, o.sold]), shop.locked,
+      you.mats, you.weapons.map((w) => `${w.id}${w.lvl}`), you.items.length]);
     if (key === this.lastShopKey) return;
     this.lastShopKey = key;
 
@@ -206,16 +270,16 @@ export class UI {
       if (!o) { box.appendChild(card); return; }
       card.style.borderTopColor = TIER_COLOR[o.tier];
 
+      // Buying a duplicate merges instead of taking a slot, so it stays legal
+      // at full slots - and saying so is the only way anyone would try it.
+      const merges = o.kind === 'weapon' && you.weapons.some((w) => w.id === o.id && w.lvl === 1);
       let body;
       if (o.kind === 'weapon') {
-        const w = WEAPONS[o.id];
-        body = `<div class="wstat">${w.cls === 'melee' ? 'Melee' : 'Ranged'} &middot; ${w.dmg} dmg<br>` +
-          `${(1 / w.cd).toFixed(1)} atk/s &middot; ${w.range} range` +
-          `${w.count ? `<br>${w.count} projectiles` : ''}` +
-          `${w.pierce ? `<br>pierces ${w.pierce >= 99 ? 'everything' : w.pierce}` : ''}` +
-          `${w.aoe ? `<br>${w.aoe} blast radius` : ''}` +
-          `${w.chain ? `<br>chains to ${w.chain}` : ''}` +
-          `${w.homing ? '<br>homing' : ''}</div>`;
+        body = weaponBody(o.id, 1);
+        if (merges) {
+          body += `<div class="merge">Combines with your ${WEAPONS[o.id].name}` +
+            ` &rarr; <b>${weaponName(o.id, 2)}</b></div>`;
+        }
       } else {
         body = `<div class="mods">${Object.entries(o.mods)
           .map(([k, v]) => `<div class="${v > 0 ? 'up' : 'down'}">${STAT_LABEL[k]} ${fmtStat(k, v)}</div>`)
@@ -223,13 +287,17 @@ export class UI {
       }
 
       const afford = you.mats >= o.price;
-      const full = o.kind === 'weapon' && you.weapons.length >= MAX_WEAPONS;
+      const full = o.kind === 'weapon' && you.weapons.length >= MAX_WEAPONS && !merges;
+      const locked = !!shop.locked[i];
+      card.classList.toggle('locked', locked);
       card.innerHTML =
-        `<button class="lock ${shop.locked[i] ? 'on' : ''}" title="Lock through rerolls">&#128274;</button>` +
+        `<button class="lock ${locked ? 'on' : ''}" aria-pressed="${locked}" ` +
+        `title="${locked ? 'Locked - kept through rerolls and into the next wave' : 'Lock: keep this through rerolls and into the next wave'}">` +
+        `${locked ? '&#128274;' : '&#128275;'}</button>` +
         `<span class="kind" style="color:${TIER_COLOR[o.tier]}">${TIER_NAME[o.tier]} ${o.kind}</span>` +
         `<h4>${o.name}</h4>${body}` +
         `<button class="btn buy ${afford && !o.sold && !full ? 'primary' : ''}" ${o.sold || !afford || full ? 'disabled' : ''}>` +
-        `${o.sold ? 'Bought' : full ? 'Slots full' : `Buy ${o.price}`}</button>`;
+        `${o.sold ? 'Bought' : full ? 'Slots full' : merges ? `Combine ${o.price}` : `Buy ${o.price}`}</button>`;
       card.querySelector('.lock').onclick = () => this.cb.onLock(i);
       card.querySelector('.buy').onclick = () => this.cb.onBuy(i);
       box.appendChild(card);
@@ -243,10 +311,16 @@ export class UI {
     const wbox = $('invWeapons');
     wbox.innerHTML = '';
     you.weapons.forEach((w, i) => {
-      const row = el('div', 'inv-row');
+      const def = weaponAt(w.id, w.lvl);
+      const row = el('div', 'inv-row wpn');
+      const dupe = you.weapons.some((o, j) => j !== i && o.id === w.id && o.lvl === w.lvl);
       row.innerHTML =
-        `<span class="swatch" style="background:${TIER_COLOR[w.tier - 1]}"></span><span>${w.name}</span>` +
-        `<button class="btn tiny sell" ${you.weapons.length <= 1 ? 'disabled' : ''}>Sell ${Math.floor(WEAPONS[w.id].price * 0.5)}</button>`;
+        `<span class="swatch" style="background:${TIER_COLOR[w.tier - 1]}"></span>` +
+        `<span class="wname">${WEAPONS[w.id].name}${w.lvl > 1 ? ` <b class="lvl">${ROMAN[w.lvl - 1]}</b>` : ''}` +
+        `<small>${def.dmg} dmg &middot; ${(1 / def.cd).toFixed(1)}/s &middot; ${Math.round(weaponDps(def))} dps</small></span>` +
+        `<button class="btn tiny sell" ${you.weapons.length <= 1 ? 'disabled' : ''}>Sell ${w.sell}</button>`;
+      row.title = `${WEAPONS[w.id].desc}\nScales with ${scaleText(def).replace(/&times;/g, 'x').replace(/&middot;/g, ',')}`
+        + (dupe && w.lvl < MAX_WEAPON_LVL ? '\nYou own two of these - they will combine.' : '');
       row.querySelector('.sell').onclick = () => this.cb.onSell('weapon', i);
       wbox.appendChild(row);
     });
@@ -260,6 +334,8 @@ export class UI {
       row.innerHTML =
         `<span class="swatch" style="background:${TIER_COLOR[it.tier - 1]}"></span><span>${it.name}</span>` +
         `<button class="btn tiny sell">Sell ${Math.floor((def?.price || 10) * 0.5)}</button>`;
+      row.title = Object.entries(it.mods || {})
+        .map(([k, v]) => `${STAT_LABEL[k]} ${fmtStat(k, v)}`).join('\n');
       row.querySelector('.sell').onclick = () => this.cb.onSell('item', i);
       ibox.appendChild(row);
     });

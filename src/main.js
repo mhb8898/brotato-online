@@ -77,6 +77,9 @@ class Game {
     this.mouse = { x: ARENA.w / 2, y: 0, active: false };
     this.touch = null;
     this.muted = false;
+    // Press P for a live cost breakdown. The only honest way to find a stutter
+    // is to measure it on the machine that stutters.
+    this.perf = { on: false, sim: 0, draw: 0, hud: 0, frames: 0, ticks: 0, at: 0 };
 
     this.bindInput();
     this.ui.screen('menu');
@@ -95,7 +98,13 @@ class Game {
 
     // A hidden tab receives no keyup events, so a held key would stick down
     // forever and walk the player into a wall while you are away.
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.keys.clear(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.keys.clear();
+      // rAF is paused while hidden but the sim ticker is not, so the first
+      // report after returning would otherwise show a wild spike that never
+      // happened on screen.
+      else Object.assign(this.perf, { sim: 0, draw: 0, hud: 0, frames: 0, ticks: 0, at: performance.now() });
+    });
   }
 
   get isSim() { return this.mode === MODE.SOLO || this.mode === MODE.HOST; }
@@ -127,6 +136,11 @@ class Game {
       onPick: (idx) => { sfx.buy(); this.sendControl({ t: 'levelpick', idx }); },
       onRestart: () => this.sendControl({ t: 'restart' }),
       onCopyLink: () => this.copyLink(),
+      onNetTest: async () => {
+        this.ui.netTest('running');
+        const { checkConnectivity } = await import('./netcheck.js');
+        this.ui.netTest('done', await checkConnectivity());
+      },
       onMute: () => {
         this.muted = !this.muted;
         setMuted(this.muted);
@@ -215,6 +229,7 @@ class Game {
         if (v && v.getUint8(0) === MSG.SNAPSHOT) this.state.pushSnapshot(decodeSnapshot(v));
       },
       onStatus: (t, k) => this.ui.toast(t, k),
+      onStage: (t) => this.ui.connecting(t),
       onClose: () => {
         this.ui.toast('Host closed the game.', 'bad');
         this.teardown();
@@ -334,8 +349,8 @@ class Game {
         sfx.down();
         break;
       case 'toast':
-        this.ui.toast(msg.msg, 'warn');
-        sfx.deny();
+        this.ui.toast(msg.msg, msg.kind || 'warn');
+        if (msg.kind === 'good') sfx.buy(); else sfx.deny();
         break;
       default: break;
     }
@@ -356,18 +371,32 @@ class Game {
   bindInput() {
     const canvas = document.getElementById('game');
 
+    // Movement keys are swallowed with preventDefault so the page never
+    // scrolls mid-fight. That must not apply while the player is typing: it
+    // used to make W, A, S and D impossible to put in your own name.
+    const typing = (e) => {
+      const t = e.target;
+      return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    };
+
     addEventListener('keydown', (e) => {
-      if (e.repeat) return;
+      if (e.repeat || typing(e)) return;
       const k = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
       this.keys.add(k);
       unlock();
+      if (k === 'p') {
+        this.perf.on = !this.perf.on;
+        document.getElementById('perf').classList.toggle('hidden', !this.perf.on);
+      }
       // 1-4 pick a level-up without reaching for the mouse.
       if (this.levelMsg && k >= '1' && k <= '4') {
         const i = +k - 1;
         if (this.levelMsg.options[i]) { sfx.buy(); this.sendControl({ t: 'levelpick', idx: i }); }
       }
     });
+    // No `typing` guard here on purpose: a key pressed before focus moved into
+    // a field still has to be released, or it sticks down forever.
     addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     addEventListener('blur', () => this.keys.clear());
 
@@ -462,10 +491,12 @@ class Game {
       // through a hundred ticks in one go.
       while (this.simAcc >= TICK && steps++ < 4) {
         this.simAcc -= TICK;
+        const t0 = this.perf.on ? performance.now() : 0;
         this.world.step();
         const bytes = encodeSnapshot(this.world.snapshot());
         this.host?.broadcastState(bytes);
         this.state.pushSnapshot(decodeSnapshot(asView(bytes)));
+        if (this.perf.on) { this.perf.sim += performance.now() - t0; this.perf.ticks++; }
       }
       if (steps >= 4) this.simAcc = 0;
     }
@@ -484,8 +515,11 @@ class Game {
       const dur = Math.min(50, 18 + view.wave * 2);
       info.danger = 1 - Math.max(0, Math.min(1, view.timeLeft / dur));
     }
+    const tDraw = this.perf.on ? performance.now() : 0;
     this.renderer.draw(view, info, dt);
+    if (this.perf.on) this.perf.draw += performance.now() - tDraw;
 
+    const tHud = this.perf.on ? performance.now() : 0;
     if (view) {
       this.ui.updateHud(view, this.state.you, this.state.roster, this.myPid);
       if (view.phase === PHASE.SHOP) {
@@ -504,6 +538,28 @@ class Game {
     if (this.mode === MODE.CLIENT) {
       this.ui.netBadge(this.state.stale ? 'Connection unstable…' : null);
     }
+    if (this.perf.on) { this.perf.hud += performance.now() - tHud; this.reportPerf(now, view); }
+  }
+
+  /** Roll up a second of samples so the numbers are readable, not a blur. */
+  reportPerf(now, view) {
+    const p = this.perf;
+    p.frames++;
+    if (now - p.at < 500) return;
+    const span = now - p.at;
+    // draw/hud are per rendered frame; sim is per simulation tick. Dividing
+    // them by the same number would be nonsense - they run on separate clocks.
+    const perFrame = (v) => (v / Math.max(1, p.frames)).toFixed(2);
+    const simPerTick = (p.sim / Math.max(1, p.ticks)).toFixed(2);
+    const load = Math.round(((p.draw + p.hud + p.sim) / span) * 100);
+    document.getElementById('perf').textContent =
+      `${Math.round((p.frames * 1000) / span)}fps `
+      + `| draw ${perFrame(p.draw)} hud ${perFrame(p.hud)} ms/frame (budget 16.7) `
+      + `| sim ${simPerTick} ms/tick (budget 33.3) `
+      + `| busy ${load}% `
+      + `| e${view?.enemies.length || 0} p${view?.projs.length || 0} `
+      + `fx${this.renderer.parts.length + this.renderer.floats.length}`;
+    p.at = now; p.frames = 0; p.ticks = 0; p.sim = 0; p.draw = 0; p.hud = 0;
   }
 }
 

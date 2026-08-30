@@ -30,6 +30,27 @@ const peerOpts = () => ({
   ...(PEER_SERVER || {}),
 });
 
+/**
+ * PeerJS attaches the RTCPeerConnection lazily, so poll briefly for it and then
+ * report ICE state changes. This is the difference between "no room with that
+ * code" and "the room is there but your two networks will not talk to each
+ * other" - previously both surfaced as the same unhelpful timeout.
+ */
+function watchIce(conn, onState) {
+  let done = false;
+  const attach = () => {
+    const pc = conn.peerConnection;
+    if (!pc || done) return !!pc;
+    done = true;
+    onState(pc.iceConnectionState);
+    pc.addEventListener('iceconnectionstatechange', () => onState(pc.iceConnectionState));
+    return true;
+  };
+  if (attach()) return;
+  const t = setInterval(() => { if (attach()) clearInterval(t); }, 200);
+  setTimeout(() => clearInterval(t), 20000);
+}
+
 export function makeRoomCode() {
   // Ambiguity-free alphabet: no O/0, no I/1 - people read these aloud.
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -91,6 +112,15 @@ export class Host {
       conn.on('data', (d) => this._onCtrl(conn.peer, d));
       conn.on('close', () => this._drop(conn.peer));
       conn.on('error', () => this._drop(conn.peer));
+      // A peer that reaches signalling but never completes ICE used to hang
+      // silently on both ends. Say so, and stop holding the slot.
+      setTimeout(() => {
+        const r = this.peers.get(conn.peer);
+        if (r && !r.joined) {
+          this.cb.onStatus?.('A player could not connect (their network blocked the direct link).', 'warn');
+          this._drop(conn.peer);
+        }
+      }, 30000);
     } else {
       rec.state = conn;
       conn.on('data', (d) => {
@@ -109,7 +139,8 @@ export class Host {
         setTimeout(() => this._drop(peerId), 400);
         return;
       }
-      if (this.peers.size > 8) {
+      // Count actual players, not half-finished handshakes.
+      if ([...this.peers.values()].filter((r) => r.joined).length >= 7) {
         rec.ctrl?.send({ t: 'reject', reason: 'Room is full (8 players max).' });
         setTimeout(() => this._drop(peerId), 400);
         return;
@@ -167,6 +198,20 @@ export class Client {
     this.ctrl = null;
     this.state = null;
     this.pid = 0;
+    this.ice = 'new';
+    this.reachedHost = false;
+  }
+
+  /** What actually went wrong, in words a player can act on. */
+  _timeoutReason() {
+    if (!this.reachedHost) {
+      return 'No answer from that room. Check the code, and make sure the host still has the tab open.';
+    }
+    if (this.ice === 'failed' || this.ice === 'checking' || this.ice === 'disconnected') {
+      return 'Found the room, but your two networks refused a direct connection '
+        + '(strict NAT, or a work/school firewall). This needs a TURN relay - see src/config.js.';
+    }
+    return 'Found the room, but the connection never finished opening. Try again.';
   }
 
   start() {
@@ -174,13 +219,15 @@ export class Client {
       // eslint-disable-next-line no-undef
       this.peer = new Peer(null, peerOpts());
       const fail = (m) => { try { this.peer.destroy(); } catch { /* noop */ } reject(new Error(m)); };
-      const timer = setTimeout(() => fail('Could not reach the host. Check the room code, or the host may be offline.'), 25000);
+      const timer = setTimeout(() => fail(this._timeoutReason()), 25000);
       let settled = false;
 
       this.peer.on('error', (err) => {
         if (settled) { this.cb.onStatus?.(`Network: ${err.type}`, 'warn'); return; }
         clearTimeout(timer);
-        if (err.type === 'peer-unavailable') fail('No room with that code is open right now.');
+        if (err.type === 'peer-unavailable') fail('No room with that code is open right now. Codes die when the host closes the tab.');
+        else if (err.type === 'browser-incompatible') fail('This browser cannot do WebRTC data channels.');
+        else if (err.type === 'network') fail('Could not reach the signalling server. Check your connection, then retry.');
         else fail(err.message || err.type);
       });
 
@@ -189,7 +236,20 @@ export class Client {
         this.ctrl = this.peer.connect(host, CTRL_OPTS);
         this.state = this.peer.connect(host, STATE_OPTS);
 
+        watchIce(this.ctrl, (st) => {
+          this.ice = st;
+          if (settled) return;
+          if (st === 'checking') this.cb.onStage?.('Found the room - negotiating a direct link…');
+          else if (st === 'connected' || st === 'completed') this.cb.onStage?.('Connected - joining the lobby…');
+          else if (st === 'failed') {
+            clearTimeout(timer);
+            fail('Found the room, but no direct connection is possible between your networks '
+              + '(strict NAT or a firewall). This needs a TURN relay - see src/config.js.');
+          }
+        });
+
         this.ctrl.on('open', () => {
+          this.reachedHost = true;
           this.ctrl.send({ t: 'hello', name: this.name, ver: PROTO_VERSION });
         });
         this.ctrl.on('data', (msg) => {

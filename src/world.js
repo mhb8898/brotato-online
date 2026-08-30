@@ -11,7 +11,8 @@
 
 import {
   ARENA, BASE_STATS, CHARACTERS, WEAPONS, WEAPON_IDS, ITEMS, UPGRADES,
-  ENEMIES, MAX_WAVE, MAX_WEAPONS, bossForWave,
+  ENEMIES, MAX_WAVE, MAX_WEAPONS, MAX_WEAPON_LVL, bossForWave,
+  weaponAt, weaponName,
 } from './data.js';
 import { FX, PROJ_KINDS } from './protocol.js';
 
@@ -81,6 +82,7 @@ export class World {
     this.fx = [];
     this.nextId = 1;
     this.spawnAcc = 0;
+    this.deadCount = 0;
     this.grid = new Grid();
     this._scratch = [];
     this.result = null;
@@ -150,7 +152,12 @@ export class World {
       case 'buy':     this.buy(p, msg.slot); break;
       case 'sell':    this.sell(p, msg.kind, msg.idx); break;
       case 'reroll':  this.reroll(p); break;
-      case 'lock':    if (p.shop) { p.shop.locked[msg.slot] = !p.shop.locked[msg.slot]; this.pushShop(p); } break;
+      case 'lock':
+        if (this.phase === PHASE.SHOP && p.shop && p.shop.offers[msg.slot] && !p.shop.offers[msg.slot].sold) {
+          p.shop.locked[msg.slot] = !p.shop.locked[msg.slot];
+          this.pushShop(p);
+        }
+        break;
       case 'shopready':
         if (this.phase === PHASE.SHOP) {
           p.ready = !!msg.v;
@@ -179,7 +186,7 @@ export class World {
   // =========================================================================
   applyCharacter(p) {
     const c = CHARACTERS[p.char];
-    p.weapons = [{ id: c.weapon, cd: 0 }];
+    p.weapons = [{ id: c.weapon, lvl: 1, cd: 0 }];
     p.items = [];
     p.upgrades = [];
     this.recomputeStats(p);
@@ -201,7 +208,14 @@ export class World {
     this.phase = PHASE.LOBBY;
     this.wave = 0;
     this.enemies.length = 0; this.projs.length = 0; this.pickups.length = 0;
-    for (const p of this.players.values()) { p.ready = false; this.applyCharacter(p); }
+    for (const p of this.players.values()) {
+      p.ready = false;
+      p.shop = null;
+      p.pendingLevels = 0;
+      p.levelOptions = null;
+      this.applyCharacter(p);
+      this.pushLevel(p);
+    }
     this.pushLobby();
     for (const p of this.players.values()) this.pushYou(p);
   }
@@ -217,7 +231,6 @@ export class World {
     let i = 0;
     for (const p of this.players.values()) {
       p.ready = false;
-      p.shop = null;
       p.alive = true;
       p.hp = Math.max(p.hp, Math.ceil(p.stats.maxHp * 0.5));
       p.iframe = 1.2;
@@ -230,6 +243,7 @@ export class World {
     }
     this.send(null, { t: 'wave', wave: n, dur: this.timeLeft, boss: this.isBossWave(n) });
     this.pushLobby();
+    for (const p of this.players.values()) this.pushLevel(p);
   }
 
   isBossWave(n) { return n % 5 === 0; }
@@ -262,6 +276,7 @@ export class World {
     }
     this.send(null, { t: 'shopopen', wave: this.wave, next: this.wave + 1, dur: SHOP_TIMEOUT });
     this.pushLobby();
+    for (const p of this.players.values()) this.pushLevel(p);
   }
 
   scores() {
@@ -326,16 +341,29 @@ export class World {
     };
   }
 
+  /**
+   * @param fresh true when a new shop opens (resets the reroll price ladder).
+   *              Locks deliberately survive that: locking something you cannot
+   *              afford yet is only useful if it is still there next wave.
+   */
   rollShop(p, fresh) {
-    if (!p.shop || fresh) p.shop = { offers: [null, null, null, null], locked: [false, false, false, false], rerolls: 0 };
+    if (!p.shop) p.shop = { offers: [null, null, null, null], locked: [false, false, false, false], rerolls: 0 };
+    if (fresh) p.shop.rerolls = 0;
     for (let i = 0; i < 4; i++) {
+      if (p.shop.offers[i] && p.shop.offers[i].sold) p.shop.locked[i] = false;
       if (p.shop.locked[i] && p.shop.offers[i]) continue;
       p.shop.offers[i] = this.rollOffer(p);
     }
     this.pushShop(p);
   }
 
+  /** True once every slot is bought out - there is nothing left to reroll for. */
+  shopCleared(p) {
+    return !!p.shop && p.shop.offers.every((o) => !o || o.sold);
+  }
+
   rerollCost(p) {
+    if (this.shopCleared(p)) return 0;   // cleared the shop: the next roll is on us
     return Math.ceil((2 + this.wave * 0.6) * (1 + p.shop.rerolls * 0.55));
   }
 
@@ -344,22 +372,57 @@ export class World {
     const cost = this.rerollCost(p);
     if (p.mats < cost) return;
     p.mats -= cost;
-    p.shop.rerolls++;
+    // A free roll does not advance the price ladder, so clearing the shop is
+    // worth doing rather than something you fall into.
+    if (cost > 0) p.shop.rerolls++;
     this.rollShop(p, false);
     this.pushYou(p);
+  }
+
+  /** Would buying a fresh `id` immediately merge with something already owned? */
+  wouldMerge(p, id) {
+    return p.weapons.some((w) => w.id === id && w.lvl === 1);
+  }
+
+  /**
+   * Brotato-style combining: two identical weapons at the same level fuse into
+   * one at the next level. Runs to a fixed point, so a merge that produces a
+   * pair one level up cascades in the same step.
+   */
+  combineWeapons(p) {
+    for (;;) {
+      let a = -1, b = -1;
+      for (let i = 0; i < p.weapons.length && a < 0; i++) {
+        for (let j = i + 1; j < p.weapons.length; j++) {
+          if (p.weapons[i].id === p.weapons[j].id
+            && p.weapons[i].lvl === p.weapons[j].lvl
+            && p.weapons[i].lvl < MAX_WEAPON_LVL) { a = i; b = j; break; }
+        }
+      }
+      if (a < 0) return;
+      p.weapons[a].lvl++;
+      p.weapons[a].cd = 0;
+      p.weapons.splice(b, 1);
+      this.send(p.id, {
+        t: 'toast', kind: 'good',
+        msg: `Combined into ${weaponName(p.weapons[a].id, p.weapons[a].lvl)}`,
+      });
+    }
   }
 
   buy(p, slot) {
     if (this.phase !== PHASE.SHOP || !p.shop) return;
     const o = p.shop.offers[slot];
     if (!o || o.sold || p.mats < o.price) return;
-    if (o.kind === 'weapon' && p.weapons.length >= MAX_WEAPONS) {
+    // A duplicate is always allowed at full slots: it merges instead of adding.
+    if (o.kind === 'weapon' && p.weapons.length >= MAX_WEAPONS && !this.wouldMerge(p, o.id)) {
       this.send(p.id, { t: 'toast', msg: 'Weapon slots full - sell one first' });
       return;
     }
     p.mats -= o.price;
     o.sold = true;
-    if (o.kind === 'weapon') p.weapons.push({ id: o.id, cd: 0 });
+    p.shop.locked[slot] = false;
+    if (o.kind === 'weapon') { p.weapons.push({ id: o.id, lvl: 1, cd: 0 }); this.combineWeapons(p); }
     else p.items.push(o.id);
     this.recomputeStats(p);
     this.pushShop(p);
@@ -370,9 +433,9 @@ export class World {
     if (this.phase !== PHASE.SHOP) return;
     if (kind === 'weapon') {
       if (p.weapons.length <= 1 || !p.weapons[idx]) return;
-      const def = WEAPONS[p.weapons[idx].id];
+      const w = p.weapons[idx];
       p.weapons.splice(idx, 1);
-      p.mats += Math.floor(def.price * 0.5);
+      p.mats += this.sellValue(w);
     } else {
       const id = p.items[idx];
       if (!id) return;
@@ -382,6 +445,11 @@ export class World {
     }
     this.recomputeStats(p);
     this.pushYou(p);
+  }
+
+  /** Half price, doubled per level, since each level swallowed two weapons. */
+  sellValue(w) {
+    return Math.floor(WEAPONS[w.id].price * 0.5 * Math.pow(2, (w.lvl || 1) - 1));
   }
 
   pushShop(p) {
@@ -402,7 +470,10 @@ export class World {
       t: 'you',
       id: p.id, char: p.char, stats: p.stats, mats: p.mats,
       level: p.level, xp: p.xp, xpNeed: p.xpNeed,
-      weapons: p.weapons.map((w) => ({ id: w.id, name: WEAPONS[w.id].name, tier: WEAPONS[w.id].tier })),
+      weapons: p.weapons.map((w) => ({
+        id: w.id, lvl: w.lvl, name: weaponName(w.id, w.lvl),
+        tier: WEAPONS[w.id].tier, sell: this.sellValue(w),
+      })),
       items: p.items.map((id) => { const it = ITEMS.find((x) => x.id === id); return { id, name: it.name, tier: it.tier, mods: it.mods }; }),
       speed: BASE_SPEED * (1 + p.stats.speed / 100),
       alive: p.alive, kills: p.kills,
@@ -438,7 +509,19 @@ export class World {
       picked.push(u);
     }
     p.levelOptions = picked;
-    this.send(p.id, { t: 'level', level: p.level, pending: p.pendingLevels, options: picked });
+    this.pushLevel(p);
+  }
+
+  /**
+   * (Re)state whether a level-up choice is open. Clients drop their level-up
+   * panel whenever the phase changes, so any pending choice has to be restated
+   * afterwards or the player silently loses it - and because `levelOptions`
+   * stays non-null on the host, every later level-up would be swallowed too.
+   */
+  pushLevel(p) {
+    this.send(p.id, p.levelOptions
+      ? { t: 'level', level: p.level, pending: p.pendingLevels, options: p.levelOptions }
+      : { t: 'level', options: null });
   }
 
   pickUpgrade(p, idx) {
@@ -451,7 +534,7 @@ export class World {
     if (healed > 0) p.hp = Math.min(p.stats.maxHp, p.hp + healed);
     this.pushYou(p);
     if (p.pendingLevels > 0) this.offerUpgrades(p);
-    else this.send(p.id, { t: 'level', options: null });
+    else this.pushLevel(p);
   }
 
   // =========================================================================
@@ -471,6 +554,7 @@ export class World {
       this.stepEnemies();
       this.stepProjectiles();
       this.stepPickups();
+      this.sweepDead();
       if (this.timeLeft <= 0) this.endWave();
       else if (![...this.players.values()].some((p) => p.alive)) {
         this.phase = PHASE.OVER;
@@ -595,7 +679,7 @@ export class World {
     const st = p.stats;
     const asMul = 1 / Math.max(0.25, 1 + st.atkSpeed / 100);
     for (const w of p.weapons) {
-      const def = WEAPONS[w.id];
+      const def = weaponAt(w.id, w.lvl);
       w.cd -= TICK;
       if (w.cd > 0) continue;
       const range = def.range * (1 + st.range / 100);
@@ -606,7 +690,7 @@ export class World {
       if (!target) continue;
       w.cd = def.cd * asMul;
       const ang = Math.atan2(target.y - p.y, target.x - p.x);
-      this.fireWeapon(p, w.id, def, ang, range);
+      this.fireWeapon(p, w.id, def, ang, range, w.lvl);
     }
   }
 
@@ -623,12 +707,12 @@ export class World {
     return { dmg: Math.max(1, dmg), crit };
   }
 
-  fireWeapon(p, id, def, ang, range) {
+  fireWeapon(p, id, def, ang, range, lvl) {
     if (def.cls === 'melee') {
       this.projs.push({
         id: this.nextId++ & 65535, kind: 'swing', owner: p.id,
         x: p.x, y: p.y, ang, life: 0.16, maxLife: 0.16,
-        range, arc: def.arc, weapon: id, hit: new Set(),
+        range, arc: def.arc, weapon: id, wlvl: lvl || 1, hit: new Set(),
         knock: def.knock || 0, lifesteal: def.lifesteal || 0,
       });
       return;
@@ -681,6 +765,7 @@ export class World {
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
+      if (e.dead) continue;
       if (e.hitT > 0) e.hitT -= TICK;
       if (e.touchCd > 0) e.touchCd -= TICK;
 
@@ -735,7 +820,7 @@ export class World {
           }
           case 'explode': {
             dx = tx / d; dy = ty / d;
-            if (d < e.r + PLAYER_R + 6) { this.explodeEnemy(e, def); this.enemies.splice(i, 1); continue; }
+            if (d < e.r + PLAYER_R + 6) { this.explodeEnemy(e, def); e.dead = true; this.deadCount++; continue; }
             break;
           }
           case 'boss': {
@@ -759,7 +844,7 @@ export class World {
       this.grid.query(e.x, e.y, e.r * 2 + 24, near);
       for (let k = 0; k < near.length; k++) {
         const o = near[k];
-        if (o === e) continue;
+        if (o === e || o.dead) continue;
         const ox = e.x - o.x, oy = e.y - o.y;
         const dd = ox * ox + oy * oy;
         const min = e.r + o.r;
@@ -789,6 +874,15 @@ export class World {
         }
       }
     }
+  }
+
+  /** Drop everything killed this tick in one pass, before the snapshot. */
+  sweepDead() {
+    if (!this.deadCount) return;
+    this.deadCount = 0;
+    const live = [];
+    for (const e of this.enemies) if (!e.dead) live.push(e);
+    this.enemies = live;
   }
 
   spawnEnemyShot(e, ang, spd, dmg) {
@@ -821,7 +915,7 @@ export class World {
         const owner = this.players.get(b.owner);
         if (!owner || !owner.alive || b.life <= 0) { this.projs.splice(i, 1); continue; }
         b.x = owner.x; b.y = owner.y;
-        const def = WEAPONS[b.weapon];
+        const def = weaponAt(b.weapon, b.wlvl);
         const t = 1 - b.life / b.maxLife;
         const sweep = b.arc * (t - 0.5);
         this.grid.query(b.x, b.y, b.range + 40, near);
@@ -925,9 +1019,11 @@ export class World {
     }
 
     if (e.hp <= 0) {
+      // Flag now, compact once at the end of the tick. A wave-20 minigun kills
+      // dozens of enemies per second and indexOf+splice per corpse was two O(n)
+      // passes each; everything downstream already skips `dead`.
       e.dead = true;
-      const idx = this.enemies.indexOf(e);
-      if (idx >= 0) this.enemies.splice(idx, 1);
+      this.deadCount++;
       this.fx.push({ t: FX.DEATH, x: e.x, y: e.y, a: Math.min(255, Math.round(e.r * 2)) });
       if (owner) owner.kills++;
       const harvest = owner ? owner.stats.harvest : 0;

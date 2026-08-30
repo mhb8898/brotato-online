@@ -16,12 +16,24 @@ import { FX, PROJ_KINDS } from './protocol.js';
 
 const TAU = Math.PI * 2;
 
+// Budgets, not guesses: a wave-20 minigun build pushes ~1400 damage numbers a
+// second through here, and canvas text (stroke + fill) plus shadowBlur are by
+// far the most expensive things this renderer can do. Past these counts the
+// extra draws are illegible anyway, so they buy nothing but frame time.
+const MAX_PARTS = 320;
+const MAX_FLOATS = 80;
+const GLOW_PROJ_LIMIT = 60;    // above this many bullets, bullets lose their glow
+const GLOW_ENEMY_LIMIT = 55;   // above this many enemies, only bosses glow
+const OUTLINE_LIMIT = 34;      // above this many floats, drop the text outline
+
 export class Renderer {
   constructor(canvas) {
     this.c = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.parts = [];
     this.floats = [];
+    this.heavyProj = false;
+    this.heavyEnemy = false;
     this.shake = 0;
     this.scale = 1;
     this.ox = 0;
@@ -55,16 +67,16 @@ export class Renderer {
           this.burst(f.x, f.y, 4, '#ffd98a', 130, 0.22, 2);
           break;
         case FX.EXPLODE:
-          this.parts.push({ kind: 'ring', x: f.x, y: f.y, r: 6, max: f.a, life: 0.35, maxLife: 0.35, col: '#ff9a4a' });
+          if (this.parts.length < MAX_PARTS) this.parts.push({ kind: 'ring', x: f.x, y: f.y, r: 6, max: f.a, life: 0.35, maxLife: 0.35, col: '#ff9a4a' });
           this.burst(f.x, f.y, 16, '#ff7a3c', 320, 0.5, 4);
           this.shake = Math.max(this.shake, 7);
           break;
         case FX.BEAM:
-          this.parts.push({ kind: 'beam', x: f.x, y: f.y, x2: f.x2, y2: f.y2, life: 0.16, maxLife: 0.16, col: '#9ee6ff' });
+          if (this.parts.length < MAX_PARTS) this.parts.push({ kind: 'beam', x: f.x, y: f.y, x2: f.x2, y2: f.y2, life: 0.16, maxLife: 0.16, col: '#9ee6ff' });
           break;
         case FX.LEVELUP:
-          this.parts.push({ kind: 'ring', x: f.x, y: f.y, r: 8, max: 90, life: 0.6, maxLife: 0.6, col: '#ffe066' });
-          this.floats.push({ x: f.x, y: f.y - 34, text: 'LEVEL UP', col: '#ffe066', life: 1.1, maxLife: 1.1, size: 20, vy: -26 });
+          if (this.parts.length < MAX_PARTS) this.parts.push({ kind: 'ring', x: f.x, y: f.y, r: 8, max: 90, life: 0.6, maxLife: 0.6, col: '#ffe066' });
+          this.float({ x: f.x, y: f.y - 34, text: 'LEVEL UP', col: '#ffe066', life: 1.1, maxLife: 1.1, size: 20, vy: -26 });
           break;
         case FX.PICKUP:
           this.burst(f.x, f.y, 3, '#8dffb0', 90, 0.2, 2);
@@ -73,14 +85,14 @@ export class Renderer {
           this.burst(f.x, f.y, Math.min(20, 6 + f.a / 6), '#ff6b6b', 190, 0.45, 3);
           break;
         case FX.HEAL:
-          this.floats.push({ x: f.x, y: f.y - 26, text: '+', col: '#8dffb0', life: 0.6, maxLife: 0.6, size: 18, vy: -40 });
+          this.float({ x: f.x, y: f.y - 26, text: '+', col: '#8dffb0', life: 0.6, maxLife: 0.6, size: 18, vy: -40 });
           break;
         case FX.DODGE:
-          this.floats.push({ x: f.x, y: f.y - 26, text: 'DODGE', col: '#7ec8ff', life: 0.7, maxLife: 0.7, size: 14, vy: -34 });
+          this.float({ x: f.x, y: f.y - 26, text: 'DODGE', col: '#7ec8ff', life: 0.7, maxLife: 0.7, size: 14, vy: -34 });
           break;
         case FX.DAMAGE: {
           const crit = f.x2 === 1;
-          this.floats.push({
+          this.float({
             x: f.x + (Math.random() - 0.5) * 16, y: f.y, text: String(f.a),
             col: crit ? '#ffd166' : '#ffffff', life: crit ? 0.8 : 0.55,
             maxLife: crit ? 0.8 : 0.55, size: crit ? 20 : 13, vy: -46,
@@ -93,6 +105,11 @@ export class Renderer {
   }
 
   burst(x, y, n, col, spd, life, size) {
+    // Thin the burst rather than refusing it: a half-density explosion still
+    // reads as an explosion, an absent one does not.
+    const head = MAX_PARTS - this.parts.length;
+    if (head <= 0) return;
+    if (n > head) n = head;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * TAU;
       const s = spd * (0.4 + Math.random() * 0.6);
@@ -101,6 +118,11 @@ export class Renderer {
         life: life * (0.6 + Math.random() * 0.6), maxLife: life, col, size,
       });
     }
+  }
+
+  float(f) {
+    if (this.floats.length >= MAX_FLOATS) this.floats.shift();
+    this.floats.push(f);
   }
 
   stepFx(dt) {
@@ -141,6 +163,9 @@ export class Renderer {
     this.drawFloor(ctxInfo);
     if (!view) { g.restore(); return; }
 
+    this.heavyProj = view.projs.length > GLOW_PROJ_LIMIT;
+    this.heavyEnemy = view.enemies.length > GLOW_ENEMY_LIMIT;
+
     for (const p of view.pickups) this.drawPickup(p);
     for (const b of view.projs) if (b.flags & 1) this.drawProj(b);
     for (const e of view.enemies) this.drawEnemy(e);
@@ -154,10 +179,14 @@ export class Renderer {
 
   drawFloor(info) {
     const g = this.ctx;
-    const grd = g.createRadialGradient(ARENA.w / 2, ARENA.h / 2, 100, ARENA.w / 2, ARENA.h / 2, ARENA.w * 0.72);
-    grd.addColorStop(0, '#181d2b');
-    grd.addColorStop(1, '#0b0d15');
-    g.fillStyle = grd;
+    // The gradient never changes; building one per frame was pure waste.
+    if (!this._floorGrd) {
+      const grd = g.createRadialGradient(ARENA.w / 2, ARENA.h / 2, 100, ARENA.w / 2, ARENA.h / 2, ARENA.w * 0.72);
+      grd.addColorStop(0, '#181d2b');
+      grd.addColorStop(1, '#0b0d15');
+      this._floorGrd = grd;
+    }
+    g.fillStyle = this._floorGrd;
     g.fillRect(0, 0, ARENA.w, ARENA.h);
 
     g.strokeStyle = 'rgba(255,255,255,0.035)';
@@ -207,7 +236,9 @@ export class Renderer {
       g.lineWidth = 3;
       g.beginPath(); g.arc(e.x, e.y, r + 8 + Math.sin(this.t * 30) * 3, 0, TAU); g.stroke();
     }
-    if (def.boss || elite) {
+    // Elite glow is a nicety; boss glow is information. Under load, keep the
+    // one that tells you where the thing that kills you is.
+    if (def.boss || (elite && !this.heavyEnemy)) {
       g.shadowColor = def.color;
       g.shadowBlur = def.boss ? 30 : 16;
     }
@@ -333,8 +364,7 @@ export class Renderer {
     g.save();
     g.translate(b.x, b.y);
     g.rotate(b.ang);
-    g.shadowColor = col;
-    g.shadowBlur = 8;
+    if (!this.heavyProj) { g.shadowColor = col; g.shadowBlur = 8; }
     g.fillStyle = b.flags & 2 ? '#ffd166' : col;
 
     switch (kind) {
@@ -398,13 +428,18 @@ export class Renderer {
   drawFloats() {
     const g = this.ctx;
     g.textAlign = 'center';
+    // strokeText costs about as much as fillText, so the outline is the first
+    // thing to go once the screen is already a wall of numbers.
+    const outline = this.floats.length <= OUTLINE_LIMIT;
+    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(0,0,0,0.75)';
+    let font = '';
     for (const f of this.floats) {
       const a = f.life / f.maxLife;
       g.globalAlpha = Math.max(0, Math.min(1, a * 1.4));
-      g.font = `bold ${f.size}px system-ui, sans-serif`;
-      g.lineWidth = 3;
-      g.strokeStyle = 'rgba(0,0,0,0.75)';
-      g.strokeText(f.text, f.x, f.y);
+      const want = `bold ${f.size}px system-ui, sans-serif`;
+      if (want !== font) { font = want; g.font = want; }
+      if (outline) g.strokeText(f.text, f.x, f.y);
       g.fillStyle = f.col;
       g.fillText(f.text, f.x, f.y);
     }
