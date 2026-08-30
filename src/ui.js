@@ -272,10 +272,10 @@ export class UI {
       const v = you.stats[k];
       if (v === BASE_STATS[k] && v === 0) continue;   // hide untouched zero stats
       const d = el('div');
-      const good = k === 'speed' || k === 'maxHp' ? v > BASE_STATS[k] : v > BASE_STATS[k];
-      d.innerHTML = `<span>${STAT_LABEL[k]}</span><b class="${v > BASE_STATS[k] ? 'up' : v < BASE_STATS[k] ? 'down' : ''}">${
-        k === 'hpRegen' ? `${v.toFixed(1)}/s` : STAT_PCT.has(k) ? `${Math.round(v)}%` : Math.round(v)}</b>`;
-      void good;
+      const cls = v > BASE_STATS[k] ? 'up' : v < BASE_STATS[k] ? 'down' : '';
+      const shown = k === 'hpRegen' ? `${v.toFixed(1)}/s`
+        : STAT_PCT.has(k) ? `${Math.round(v)}%` : Math.round(v);
+      d.innerHTML = `<span>${STAT_LABEL[k]}</span><b class="${cls}">${shown}</b>`;
       box.appendChild(d);
     }
   }
