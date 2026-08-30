@@ -161,11 +161,30 @@ export class ClientState {
     const span = newer.time - older.time;
     const t = span > 0.001 ? clamp((target - older.time) / span, 0, 1) : 0;
 
+    const players = blend(older.players, newer.players, t, true);
+
+    // Draw OUR player from the prediction, everyone else from the snapshot.
+    //
+    // Without this the whole predict-and-reconcile machinery above is dead
+    // code: `pred` was computed, corrected, and then never drawn, so a client
+    // watched its own character move only after a full round trip plus the
+    // INTERP_MS buffer. The host, rendering its own simulation, felt instant -
+    // which is exactly the "host is fine, everyone else lags" report.
+    if (this.predValid) {
+      const i = players.findIndex((p) => p.id === this.pid);
+      if (i >= 0) {
+        const me = this.predictedPos(now);
+        // Never predict a corpse forward: a dead player has no inputs, and
+        // sliding their body around after the host has stopped it looks broken.
+        if (!(players[i].flags & 1)) players[i] = { ...players[i], x: me.x, y: me.y };
+      }
+    }
+
     return {
       phase: newer.phase,
       wave: newer.wave,
       timeLeft: lerp(older.timeLeft, newer.timeLeft, t),
-      players: blend(older.players, newer.players, t, true),
+      players,
       enemies: blend(older.enemies, newer.enemies, t, true),
       projs: blend(older.projs, newer.projs, t, true),
       pickups: blend(older.pickups, newer.pickups, t, false),

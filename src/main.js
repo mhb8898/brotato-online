@@ -17,12 +17,42 @@ import { Host, Client, makeRoomCode } from './net.js';
 import { ClientState } from './clientstate.js';
 import { Renderer } from './render.js';
 import { UI } from './ui.js';
-import { encodeSnapshot, decodeSnapshot, encodeInput, decodeInput, asView, MSG, FX } from './protocol.js';
+import {
+  encodeSnapshot, decodeSnapshot, encodeInput, decodeInput, asView,
+  MSG, FX, INPUT_REDUNDANCY,
+} from './protocol.js';
 import { INPUT_HZ } from './config.js';
 import { sfx, unlock, setMuted } from './audio.js';
 import { ARENA } from './data.js';
 
 const MODE = { MENU: 0, SOLO: 1, HOST: 2, CLIENT: 3 };
+
+/**
+ * Identify a key by its PHYSICAL POSITION, never by the character it types.
+ *
+ * `e.key` is the character the layout produces: on a Persian keyboard the W
+ * key reports 'ش', on Russian 'ц', on Greek 'ς'. Matching movement on 'w'
+ * therefore disables WASD outright for everyone not on a Latin layout, while
+ * looking perfectly fine to anyone testing in English. `e.code` is the
+ * position, so WASD stays WASD - and stays where the fingers are on AZERTY
+ * and QWERTZ too.
+ */
+function keyToken(e) {
+  if (e.code) return e.code;
+  // Fallback for the rare browser or IME that reports no code at all.
+  const k = (e.key || '').toLowerCase();
+  const named = {
+    w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', p: 'KeyP', ' ': 'Space',
+    arrowup: 'ArrowUp', arrowdown: 'ArrowDown',
+    arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
+  };
+  if (named[k]) return named[k];
+  if (k.length === 1 && k >= '1' && k <= '9') return `Digit${k}`;
+  return k;
+}
+
+const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
 const LOCAL_PID = 1;
 
 /**
@@ -69,6 +99,7 @@ class Game {
     this.levelMsg = null;
     this.overMsg = null;
     this.seq = 0;
+    this.recentInputs = [];
     this.simAcc = 0;
     this.inpAcc = 0;
     this.lastHp = null;
@@ -192,7 +223,9 @@ class Game {
       onControl: (pid, msg) => this.world?.onControl(pid, msg),
       onInput: (pid, data) => {
         const v = asView(data);
-        if (v && v.getUint8(0) === MSG.INPUT) this.world?.setInput(pid, decodeInput(v));
+        if (v && v.getUint8(0) === MSG.INPUT) {
+          for (const inp of decodeInput(v)) this.world?.setInput(pid, inp);
+        }
       },
       onStatus: (t, k) => this.ui.toast(t, k),
     });
@@ -381,23 +414,24 @@ class Game {
 
     addEventListener('keydown', (e) => {
       if (e.repeat || typing(e)) return;
-      const k = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
+      const k = keyToken(e);
+      if (MOVE_KEYS.has(k)) e.preventDefault();
       this.keys.add(k);
       unlock();
-      if (k === 'p') {
+      if (k === 'KeyP') {
         this.perf.on = !this.perf.on;
         document.getElementById('perf').classList.toggle('hidden', !this.perf.on);
       }
       // 1-4 pick a level-up without reaching for the mouse.
-      if (this.levelMsg && k >= '1' && k <= '4') {
-        const i = +k - 1;
+      const digit = /^(?:Digit|Numpad)([1-4])$/.exec(k);
+      if (this.levelMsg && digit) {
+        const i = +digit[1] - 1;
         if (this.levelMsg.options[i]) { sfx.buy(); this.sendControl({ t: 'levelpick', idx: i }); }
       }
     });
     // No `typing` guard here on purpose: a key pressed before focus moved into
     // a field still has to be released, or it sticks down forever.
-    addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
+    addEventListener('keyup', (e) => this.keys.delete(keyToken(e)));
     addEventListener('blur', () => this.keys.clear());
 
     addEventListener('mousemove', (e) => {
@@ -441,10 +475,10 @@ class Game {
   readInput() {
     let mx = 0, my = 0;
     const k = this.keys;
-    if (k.has('a') || k.has('arrowleft')) mx -= 1;
-    if (k.has('d') || k.has('arrowright')) mx += 1;
-    if (k.has('w') || k.has('arrowup')) my -= 1;
-    if (k.has('s') || k.has('arrowdown')) my += 1;
+    if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1;
+    if (k.has('KeyD') || k.has('ArrowRight')) mx += 1;
+    if (k.has('KeyW') || k.has('ArrowUp')) my -= 1;
+    if (k.has('KeyS') || k.has('ArrowDown')) my += 1;
     if (this.touch) { mx += this.touch.dx; my += this.touch.dy; }
 
     const pos = this.state.predictedPos(performance.now());
@@ -479,8 +513,13 @@ class Game {
       this.inpAcc -= step;
       const inp = this.readInput();
       this.state.applyLocalInput(inp);
-      if (this.mode === MODE.CLIENT) this.client?.sendState(encodeInput(inp));
-      else this.world?.setInput(LOCAL_PID, inp);
+      if (this.mode === MODE.CLIENT) {
+        // Resend the last few inputs so one lost packet cannot leave a hole in
+        // the host's stream that we have already predicted through.
+        this.recentInputs.push(inp);
+        if (this.recentInputs.length > INPUT_REDUNDANCY) this.recentInputs.shift();
+        this.client?.sendState(encodeInput(this.recentInputs));
+      } else this.world?.setInput(LOCAL_PID, inp);
     }
     if (guard >= 4) this.inpAcc = 0;
 

@@ -150,24 +150,45 @@ export function decodeSnapshot(view) {
   return snap;
 }
 
-// Input packet: 8 bytes. Sent 30x/second, so it stays tiny.
-const inputBuf = new ArrayBuffer(8);
+// Input packet: a small batch, not a single frame.
+//
+// The state channel is unreliable by design, and the host consumes exactly one
+// input per tick. A single lost packet would therefore leave a permanent hole
+// in the host's input stream that the client has already predicted through -
+// which is felt as rubber-banding, not as a dropped frame. Repeating the last
+// few inputs costs ~15 bytes and closes the hole before it opens: the host
+// ignores any sequence it has already consumed.
+export const INPUT_REDUNDANCY = 3;
+
+const INPUT_REC = 7;                                  // u32 seq + i8 + i8 + ang
+const inputBuf = new ArrayBuffer(2 + INPUT_REDUNDANCY * INPUT_REC);
 const inputView = new DataView(inputBuf);
 
-export function encodeInput(inp) {
+/** @param inputs oldest-first; the newest is what the host will act on. */
+export function encodeInput(inputs) {
+  const list = Array.isArray(inputs) ? inputs.slice(-INPUT_REDUNDANCY) : [inputs];
   const w = new Writer(inputView);
   w.u8(MSG.INPUT);
-  w.u32(inp.seq);
-  w.i8(Math.round(inp.mx * 100));
-  w.i8(Math.round(inp.my * 100));
-  w.ang(inp.aim);
-  return new Uint8Array(inputBuf.slice(0, 8));
+  w.u8(list.length);
+  for (const inp of list) {
+    w.u32(inp.seq);
+    w.i8(Math.round(inp.mx * 100));
+    w.i8(Math.round(inp.my * 100));
+    w.ang(inp.aim);
+  }
+  return new Uint8Array(inputBuf.slice(0, w.o));
 }
 
+/** @returns an array of inputs, oldest first. */
 export function decodeInput(view) {
   const r = new Reader(view);
   r.u8();
-  return { seq: r.u32(), mx: r.i8() / 100, my: r.i8() / 100, aim: r.ang() };
+  const n = r.u8();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ seq: r.u32(), mx: r.i8() / 100, my: r.i8() / 100, aim: r.ang() });
+  }
+  return out;
 }
 
 /** PeerJS hands us ArrayBuffer, Uint8Array or Blob depending on the path. */

@@ -25,6 +25,8 @@ const PLAYER_R = 14;
 const PICKUP_BASE = 46;
 const IFRAME = 0.55;
 const SHOP_TIMEOUT = 150;
+const INPUT_Q_TARGET = 1;   // spare frames of input the host will sit on
+const MAX_INPUT_Q = 4;      // hard cap, so a stalled client cannot bank movement
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const kindIdx = (k) => PROJ_KINDS.indexOf(k);
@@ -101,7 +103,7 @@ export class World {
       mats: 0, level: 1, xp: 0, xpNeed: xpFor(1),
       pendingLevels: 0, levelOptions: null,
       shop: null, ready: false,
-      input: { seq: 0, mx: 0, my: 0, aim: 0 },
+      input: { seq: 0, mx: 0, my: 0, aim: 0 }, inputQ: [],
       ack: 0, connected: true, kills: 0,
     };
     this.players.set(id, p);
@@ -172,13 +174,47 @@ export class World {
     }
   }
 
+  /**
+   * Queue an input rather than overwrite the current one.
+   *
+   * The client predicts by replaying every input the host has not acked, one
+   * simulation tick each. That only matches reality if the host also consumes
+   * exactly one input per tick - overwriting meant two inputs arriving between
+   * ticks silently lost one, and the client's replay then disagreed with the
+   * host on every jittery packet.
+   */
   setInput(pid, inp) {
     const p = this.players.get(pid);
     if (!p) return;
-    // Drop out-of-order UDP-style packets; the newest input is the only truth.
-    if (inp.seq < p.input.seq) return;
-    p.input = inp;
-    p.ack = inp.seq;
+    if (inp.seq <= p.ack) return;                        // already consumed
+    const q = p.inputQ;
+    if (q.length && inp.seq <= q[q.length - 1].seq) {     // dup from redundancy
+      if (q.some((o) => o.seq === inp.seq)) return;
+      q.push(inp);
+      q.sort((a, b) => a.seq - b.seq);
+      return;
+    }
+    q.push(inp);
+    if (q.length > MAX_INPUT_Q) q.splice(0, q.length - MAX_INPUT_Q);
+  }
+
+  /**
+   * Take one queued input per tick, which is what makes the client's replay
+   * match the host's integration exactly.
+   *
+   * The catch is that anything sitting in this queue is latency the player
+   * feels directly. Two machines never tick at exactly the same rate, so a
+   * client producing input a hair faster than the host consumes it will fill
+   * any queue you give it - measured at 200ms of self-inflicted lag before
+   * this drain existed. So keep at most one spare frame and burn through the
+   * rest; the small prediction error that causes is smoothed by reconcile().
+   */
+  consumeInput(p) {
+    const q = p.inputQ;
+    if (!q.length) return;                 // starved: repeat the last input
+    while (q.length > INPUT_Q_TARGET) { p.input = q.shift(); p.ack = p.input.seq; }
+    p.input = q.shift();
+    p.ack = p.input.seq;
   }
 
   // =========================================================================
@@ -197,6 +233,7 @@ export class World {
     for (const p of this.players.values()) {
       p.mats = 0; p.level = 1; p.xp = 0; p.xpNeed = xpFor(1);
       p.pendingLevels = 0; p.levelOptions = null; p.kills = 0;
+      p.inputQ.length = 0;
       this.applyCharacter(p);
     }
     this.wave = 0;
@@ -649,6 +686,7 @@ export class World {
   // ----------------------------------------------------------------- players
   stepPlayers() {
     for (const p of this.players.values()) {
+      this.consumeInput(p);
       if (!p.alive) continue;
       const st = p.stats;
       const spd = BASE_SPEED * (1 + st.speed / 100);
