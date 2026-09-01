@@ -1062,7 +1062,7 @@ export class World {
       // passes each; everything downstream already skips `dead`.
       e.dead = true;
       this.deadCount++;
-      this.fx.push({ t: FX.DEATH, x: e.x, y: e.y, a: Math.min(255, Math.round(e.r * 2)) });
+      this.fx.push({ t: FX.DEATH, x: e.x, y: e.y, a: Math.min(255, Math.round(e.r * 2)), x2: e.type + 1 });
       if (owner) owner.kills++;
       const harvest = owner ? owner.stats.harvest : 0;
       let n = e.mats;
@@ -1108,7 +1108,7 @@ export class World {
     if (p.hp <= 0) {
       p.hp = 0;
       p.alive = false;
-      this.fx.push({ t: FX.DEATH, x: p.x, y: p.y, a: 60 });
+      this.fx.push({ t: FX.DEATH, x: p.x, y: p.y, a: 60, x2: 0 });
       this.send(null, { t: 'down', id: p.id, name: p.name });
       this.pushYou(p);
     }

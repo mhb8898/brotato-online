@@ -9,6 +9,7 @@ import {
   TIER_COLOR, TIER_NAME, MAX_WEAPONS, MAX_WEAPON_LVL, ROMAN,
   weaponAt, weaponName, weaponDps,
 } from './data.js';
+import { renderPortrait } from './render.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -142,12 +143,13 @@ export class UI {
         .map(([k, v]) => `<span class="pill ${v > 0 ? 'up' : 'down'}">${STAT_LABEL[k]} ${fmtStat(k, v)}</span>`)
         .join('');
       node.innerHTML =
-        `<div class="dot" style="background:${ch.color};box-shadow:0 0 14px ${ch.color}"></div>` +
+        `<canvas class="portrait" width="128" height="128"></canvas>` +
         `<h4>${ch.name}</h4><p>${ch.desc}</p>` +
         `<div class="mods"><span class="pill" title="${WEAPONS[ch.weapon].desc}">${WEAPONS[ch.weapon].name}</span>${mods}</div>` +
         `<p class="starter">${WEAPONS[ch.weapon].desc}</p>`;
       node.onclick = () => { this.selChar = ch.id; this.markChar(); this.cb.onChar(ch.id); };
       grid.appendChild(node);
+      renderPortrait(node.querySelector('.portrait'), ch.id);
     }
     this.markChar();
   }

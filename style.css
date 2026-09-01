@@ -121,7 +121,7 @@ button { font-family: inherit; }
 }
 .char:hover { background: #232a41; }
 .char.sel { border-color: var(--accent); background: #262d45; }
-.char .dot { width: 26px; height: 26px; border-radius: 50%; margin-bottom: 8px; }
+.char .portrait { width: 64px; height: 64px; display: block; margin: -4px 0 4px -6px; filter: drop-shadow(0 6px 10px rgba(0,0,0,.45)); }
 .char h4 { margin: 0 0 4px; font-size: 15px; }
 .char p { margin: 0 0 8px; font-size: 11.5px; color: var(--dim); line-height: 1.4; min-height: 32px; }
 .char .mods { display: flex; flex-wrap: wrap; gap: 4px; }
