@@ -10,6 +10,7 @@ import {
   weaponAt, weaponName, weaponDps,
 } from './data.js';
 import { renderPortrait } from './render.js';
+import { renderIcon } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -140,16 +141,18 @@ export class UI {
       const node = el('button', 'char');
       node.dataset.id = ch.id;
       const mods = Object.entries(ch.mods)
-        .map(([k, v]) => `<span class="pill ${v > 0 ? 'up' : 'down'}">${STAT_LABEL[k]} ${fmtStat(k, v)}</span>`)
+        .map(([k, v]) => `<div class="mod ${v > 0 ? 'up' : 'down'}"><span>${STAT_LABEL[k]}</span><b>${fmtStat(k, v)}</b></div>`)
         .join('');
       node.innerHTML =
         `<canvas class="portrait" width="128" height="128"></canvas>` +
         `<h4>${ch.name}</h4><p>${ch.desc}</p>` +
-        `<div class="mods"><span class="pill" title="${WEAPONS[ch.weapon].desc}">${WEAPONS[ch.weapon].name}</span>${mods}</div>` +
+        `<div class="pill wpn" title="${WEAPONS[ch.weapon].desc}"><canvas class="icon xs" width="48" height="48"></canvas>${WEAPONS[ch.weapon].name}</div>` +
+        `<div class="mods">${mods}</div>` +
         `<p class="starter">${WEAPONS[ch.weapon].desc}</p>`;
       node.onclick = () => { this.selChar = ch.id; this.markChar(); this.cb.onChar(ch.id); };
       grid.appendChild(node);
       renderPortrait(node.querySelector('.portrait'), ch.id);
+      renderIcon(node.querySelector('.icon'), 'weapon', ch.weapon);
     }
     this.markChar();
   }
@@ -211,8 +214,9 @@ export class UI {
       if (key !== this._wkey) {
         this._wkey = key;
         $('weaponRow').innerHTML = you.weapons
-          .map((w) => `<span class="weapon-chip" style="border-color:${TIER_COLOR[w.tier - 1]}55">${w.name}</span>`)
+          .map((w) => `<span class="weapon-chip" style="border-color:${TIER_COLOR[w.tier - 1]}66"><canvas class="icon xs" width="48" height="48"></canvas>${w.name}</span>`)
           .join('');
+        $('weaponRow').querySelectorAll('.icon').forEach((c, i) => renderIcon(c, 'weapon', you.weapons[i].id, you.weapons[i].lvl));
       }
     }
 
@@ -284,7 +288,7 @@ export class UI {
         }
       } else {
         body = `<div class="mods">${Object.entries(o.mods)
-          .map(([k, v]) => `<div class="${v > 0 ? 'up' : 'down'}">${STAT_LABEL[k]} ${fmtStat(k, v)}</div>`)
+          .map(([k, v]) => `<div class="mod ${v > 0 ? 'up' : 'down'}"><span>${STAT_LABEL[k]}</span><b>${fmtStat(k, v)}</b></div>`)
           .join('')}</div>`;
       }
 
@@ -296,10 +300,12 @@ export class UI {
         `<button class="lock ${locked ? 'on' : ''}" aria-pressed="${locked}" ` +
         `title="${locked ? 'Locked - kept through rerolls and into the next wave' : 'Lock: keep this through rerolls and into the next wave'}">` +
         `${locked ? '&#128274;' : '&#128275;'}</button>` +
-        `<span class="kind" style="color:${TIER_COLOR[o.tier]}">${TIER_NAME[o.tier]} ${o.kind}</span>` +
-        `<h4>${o.name}</h4>${body}` +
+        `<div class="offer-head"><canvas class="icon" width="112" height="112"></canvas>` +
+        `<div class="offer-title"><span class="kind" style="color:${TIER_COLOR[o.tier]}">${TIER_NAME[o.tier]} ${o.kind}</span>` +
+        `<h4>${o.name}</h4></div></div>${body}` +
         `<button class="btn buy ${afford && !o.sold && !full ? 'primary' : ''}" ${o.sold || !afford || full ? 'disabled' : ''}>` +
         `${o.sold ? 'Bought' : full ? 'Slots full' : merges ? `Combine ${o.price}` : `Buy ${o.price}`}</button>`;
+      renderIcon(card.querySelector('.icon'), o.kind, o.id);
       card.querySelector('.lock').onclick = () => this.cb.onLock(i);
       card.querySelector('.buy').onclick = () => this.cb.onBuy(i);
       box.appendChild(card);
@@ -317,12 +323,13 @@ export class UI {
       const row = el('div', 'inv-row wpn');
       const dupe = you.weapons.some((o, j) => j !== i && o.id === w.id && o.lvl === w.lvl);
       row.innerHTML =
-        `<span class="swatch" style="background:${TIER_COLOR[w.tier - 1]}"></span>` +
+        `<canvas class="icon sm" width="72" height="72"></canvas>` +
         `<span class="wname">${WEAPONS[w.id].name}${w.lvl > 1 ? ` <b class="lvl">${ROMAN[w.lvl - 1]}</b>` : ''}` +
         `<small>${def.dmg} dmg &middot; ${(1 / def.cd).toFixed(1)}/s &middot; ${Math.round(weaponDps(def))} dps</small></span>` +
         `<button class="btn tiny sell" ${you.weapons.length <= 1 ? 'disabled' : ''}>Sell ${w.sell}</button>`;
       row.title = `${WEAPONS[w.id].desc}\nScales with ${scaleText(def).replace(/&times;/g, 'x').replace(/&middot;/g, ',')}`
         + (dupe && w.lvl < MAX_WEAPON_LVL ? '\nYou own two of these - they will combine.' : '');
+      renderIcon(row.querySelector('.icon'), 'weapon', w.id, w.lvl);
       row.querySelector('.sell').onclick = () => this.cb.onSell('weapon', i);
       wbox.appendChild(row);
     });
@@ -334,10 +341,11 @@ export class UI {
       const def = ITEMS.find((x) => x.id === it.id);
       const row = el('div', 'inv-row');
       row.innerHTML =
-        `<span class="swatch" style="background:${TIER_COLOR[it.tier - 1]}"></span><span>${it.name}</span>` +
+        `<canvas class="icon sm" width="72" height="72"></canvas><span>${it.name}</span>` +
         `<button class="btn tiny sell">Sell ${Math.floor((def?.price || 10) * 0.5)}</button>`;
       row.title = Object.entries(it.mods || {})
         .map(([k, v]) => `${STAT_LABEL[k]} ${fmtStat(k, v)}`).join('\n');
+      renderIcon(row.querySelector('.icon'), 'item', it.id);
       row.querySelector('.sell').onclick = () => this.cb.onSell('item', i);
       ibox.appendChild(row);
     });

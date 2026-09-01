@@ -16,8 +16,9 @@
 // same as the old flat polygons did - shadowBlur never runs in the hot loop.
 // ---------------------------------------------------------------------------
 
-import { ARENA, CHARACTERS, ENEMIES, TIER_COLOR, WEAPONS } from './data.js';
+import { ARENA, CHARACTERS, ENEMIES, TIER_COLOR } from './data.js';
 import { FX, PROJ_KINDS } from './protocol.js';
+import { paintWeaponShape } from './icons.js';
 
 const TAU = Math.PI * 2;
 
@@ -466,56 +467,14 @@ function paintFace(g, x, y, aim, r, dead = false) {
   }
 }
 
-/** Held weapon, rotated to `aim`. Melee characters get a blade, others a gun. */
+/** Held weapon, rotated to `aim`, flipped so the grip is never upside down. */
 function paintWeapon(g, x, y, aim, weaponId, r) {
-  const def = WEAPONS[weaponId] || WEAPONS.pistol;
   g.save();
   g.translate(x, y);
   g.rotate(aim);
   const flip = Math.abs(((aim % TAU) + TAU) % TAU - Math.PI) < Math.PI / 2 ? -1 : 1;
   g.scale(1, flip);
-  if (def.cls === 'melee' && weaponId === 'hammer') {
-    g.fillStyle = '#5a3d2b';
-    roundRect(g, r * 0.4, -r * 0.14, r * 1.5, r * 0.28, 2); g.fill();
-    g.fillStyle = def.color || '#a08b6b';
-    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1;
-    roundRect(g, r * 1.7, -r * 0.55, r * 0.75, r * 1.1, 3); g.fill(); g.stroke();
-    g.fillStyle = 'rgba(255,255,255,0.35)';
-    roundRect(g, r * 1.78, -r * 0.45, r * 0.25, r * 0.9, 2); g.fill();
-  } else if (def.cls === 'melee') {
-    // handle
-    g.fillStyle = '#5a3d2b';
-    roundRect(g, r * 0.35, -r * 0.16, r * 0.55, r * 0.32, 2); g.fill();
-    // guard
-    g.fillStyle = '#c9a86a';
-    g.fillRect(r * 0.88, -r * 0.34, r * 0.14, r * 0.68);
-    // blade
-    g.fillStyle = def.color || '#dfe9f5';
-    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1;
-    g.beginPath();
-    g.moveTo(r * 1.0, -r * 0.2);
-    g.lineTo(r * 2.2, -r * 0.16);
-    g.lineTo(r * 2.55, 0);
-    g.lineTo(r * 2.2, r * 0.16);
-    g.lineTo(r * 1.0, r * 0.2);
-    g.closePath(); g.fill(); g.stroke();
-    g.fillStyle = 'rgba(255,255,255,0.55)';
-    g.fillRect(r * 1.1, -r * 0.12, r * 1.1, r * 0.08);
-  } else {
-    // gun body
-    g.fillStyle = '#2c3044';
-    g.strokeStyle = '#15171f'; g.lineWidth = 1;
-    roundRect(g, r * 0.45, -r * 0.3, r * 1.15, r * 0.5, 2); g.fill(); g.stroke();
-    // barrel
-    g.fillStyle = '#3d4257';
-    roundRect(g, r * 1.5, -r * 0.16, r * 0.75, r * 0.32, 1.5); g.fill(); g.stroke();
-    // grip
-    g.fillStyle = '#4a3324';
-    roundRect(g, r * 0.6, r * 0.1, r * 0.35, r * 0.55, 1.5); g.fill();
-    // accent stripe in the weapon's colour
-    g.fillStyle = def.color || '#ffe9a8';
-    g.fillRect(r * 0.6, -r * 0.22, r * 0.85, r * 0.12);
-  }
+  paintWeaponShape(g, weaponId, r);
   g.restore();
 }
 
